@@ -1,1 +1,15 @@
-
+154.203.43.247:5536:jtwapkgz:e0l37lifqc9c
+84.247.60.125:6095:jtwapkgz:e0l37lifqc9c
+216.10.27.159:6837:jtwapkgz:e0l37lifqc9c
+142.111.67.146:5611:jtwapkgz:e0l37lifqc9c
+142.147.128.93:6593:jtwapkgz:e0l37lifqc9c
+142.111.48.253:7030:iokdqsxo:ga8m7g2re10q
+198.23.239.134:6540:iokdqsxo:ga8m7g2re10q
+45.38.107.97:6014:iokdqsxo:ga8m7g2re10q
+107.172.163.27:6543:iokdqsxo:ga8m7g2re10q
+64.137.96.74:6641:iokdqsxo:ga8m7g2re10q
+154.203.43.247:5536:iokdqsxo:ga8m7g2re10q
+84.247.60.125:6095:iokdqsxo:ga8m7g2re10q
+216.10.27.159:6837:iokdqsxo:ga8m7g2re10q
+142.111.67.146:5611:iokdqsxo:ga8m7g2re10q
+142.147.128.93:6593:iokdqsxo:ga8m7g2re10q
