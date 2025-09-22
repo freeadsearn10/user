@@ -1,4 +1,4 @@
 {
-    "max_numbers_per_request": 1,
-    "last_updated": "2025-09-23T00:21:11.180839"
+    "max_numbers_per_request": 100,
+    "last_updated": "2025-09-22T18:53:21.373778"
 }
