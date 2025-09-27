@@ -1,7 +1,7 @@
 {
-    "total_users": 0,
-    "active_users": 0,
-    "inactive_users": 0,
+    "total_users": 10,
+    "active_users": 9,
+    "inactive_users": 1,
     "total_checks": 625,
-    "last_updated": "2025-09-27T10:08:47.147426"
+    "last_updated": "2025-09-27T17:07:42.870399"
 }
