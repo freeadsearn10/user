@@ -1,1 +1,64 @@
-
+{
+    "8043126536": [
+        {
+            "ip": "142.111.48.253",
+            "port": "7030",
+            "user": "arwlpzgs",
+            "pass": "g735jomg3jgm"
+        },
+        {
+            "ip": "198.23.239.134",
+            "port": "6540",
+            "user": "arwlpzgs",
+            "pass": "g735jomg3jgm"
+        },
+        {
+            "ip": "45.38.107.97",
+            "port": "6014",
+            "user": "arwlpzgs",
+            "pass": "g735jomg3jgm"
+        },
+        {
+            "ip": "107.172.163.27",
+            "port": "6543",
+            "user": "arwlpzgs",
+            "pass": "g735jomg3jgm"
+        },
+        {
+            "ip": "64.137.96.74",
+            "port": "6641",
+            "user": "arwlpzgs",
+            "pass": "g735jomg3jgm"
+        },
+        {
+            "ip": "154.203.43.247",
+            "port": "5536",
+            "user": "arwlpzgs",
+            "pass": "g735jomg3jgm"
+        },
+        {
+            "ip": "84.247.60.125",
+            "port": "6095",
+            "user": "arwlpzgs",
+            "pass": "g735jomg3jgm"
+        },
+        {
+            "ip": "216.10.27.159",
+            "port": "6837",
+            "user": "arwlpzgs",
+            "pass": "g735jomg3jgm"
+        },
+        {
+            "ip": "142.111.67.146",
+            "port": "5611",
+            "user": "arwlpzgs",
+            "pass": "g735jomg3jgm"
+        },
+        {
+            "ip": "142.147.128.93",
+            "port": "6593",
+            "user": "arwlpzgs",
+            "pass": "g735jomg3jgm"
+        }
+    ]
+}
