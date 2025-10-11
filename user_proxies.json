@@ -120,5 +120,139 @@
             "user": "bcuufzib",
             "pass": "usby6ks7kdrh"
         }
+    ],
+    "7646847122": [
+        {
+            "ip": "48.253",
+            "port": "7030",
+            "user": "linhdmjj",
+            "pass": "7l9aitbplw5h"
+        },
+        {
+            "ip": "198.23.239.134",
+            "port": "6540",
+            "user": "linhdmjj",
+            "pass": "7l9aitbplw5h"
+        },
+        {
+            "ip": "45.38.107.97",
+            "port": "6014",
+            "user": "linhdmjj",
+            "pass": "7l9aitbplw5h"
+        },
+        {
+            "ip": "107.172.163.27",
+            "port": "6543",
+            "user": "linhdmjj",
+            "pass": "7l9aitbplw5h"
+        },
+        {
+            "ip": "64.137.96.74",
+            "port": "6641",
+            "user": "linhdmjj",
+            "pass": "7l9aitbplw5h"
+        },
+        {
+            "ip": "154.203.43.247",
+            "port": "5536",
+            "user": "linhdmjj",
+            "pass": "7l9aitbplw5h"
+        },
+        {
+            "ip": "84.247.60.125",
+            "port": "6095",
+            "user": "linhdmjj",
+            "pass": "7l9aitbplw5h"
+        },
+        {
+            "ip": "216.10.27.159",
+            "port": "6837",
+            "user": "linhdmjj",
+            "pass": "7l9aitbplw5h"
+        },
+        {
+            "ip": "142.111.67.146",
+            "port": "5611",
+            "user": "linhdmjj",
+            "pass": "7l9aitbplw5h"
+        },
+        {
+            "ip": "142.147.128.93",
+            "port": "6593",
+            "user": "linhdmjj",
+            "pass": "7l9aitbplw5h"
+        },
+        {
+            "ip": "142.111.48.253",
+            "port": "7030",
+            "user": "khmnotsn",
+            "pass": "63dh0qi6z9fs"
+        },
+        {
+            "ip": "198.23.239.134",
+            "port": "6540",
+            "user": "khmnotsn",
+            "pass": "63dh0qi6z9fs"
+        },
+        {
+            "ip": "45.38.107.97",
+            "port": "6014",
+            "user": "khmnotsn",
+            "pass": "63dh0qi6z9fs"
+        },
+        {
+            "ip": "107.172.163.27",
+            "port": "6543",
+            "user": "khmnotsn",
+            "pass": "63dh0qi6z9fs"
+        },
+        {
+            "ip": "64.137.96.74",
+            "port": "6641",
+            "user": "khmnotsn",
+            "pass": "63dh0qi6z9fs"
+        },
+        {
+            "ip": "154.203.43.247",
+            "port": "5536",
+            "user": "khmnotsn",
+            "pass": "63dh0qi6z9fs"
+        },
+        {
+            "ip": "84.247.60.125",
+            "port": "6095",
+            "user": "khmnotsn",
+            "pass": "63dh0qi6z9fs"
+        },
+        {
+            "ip": "216.10.27.159",
+            "port": "6837",
+            "user": "khmnotsn",
+            "pass": "63dh0qi6z9fs"
+        },
+        {
+            "ip": "142.111.67.146",
+            "port": "5611",
+            "user": "khmnotsn",
+            "pass": "63dh0qi6z9fs"
+        },
+        {
+            "ip": "142.147.128.93",
+            "port": "6593",
+            "user": "khmnotsn",
+            "pass": "63dh0qi6z9fs"
+        },
+        {
+            "ip": "142.111.48.253",
+            "port": "7030",
+            "user": "bhhqirgm",
+            "pass": "u5lhavtf900p"
+        },
+        {
+            "ip": "198.23.239.134",
+            "port": "6540",
+            "user": "bhhqirgm",
+            "pass": "u5lhavtf900p"
+        }
     ]
 }
