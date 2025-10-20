@@ -5,7 +5,8 @@
   "username": "Unknown_Father",
   "language_code": "en",
   "is_bot": false,
-  "last_interaction": "2025-10-20T14:15:28.458526",
-  "approved": false,
-  "language": "en"
+  "last_interaction": "2025-10-20T14:16:33.003823",
+  "approved": true,
+  "language": "en",
+  "expiry_date": "2025-10-21T14:16:24.274038+00:00"
 }
