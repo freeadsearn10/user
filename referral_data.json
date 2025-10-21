@@ -3,7 +3,8 @@
     "referral_code": "9TqlfzFU",
     "referred_by": null,
     "referred_users": [
-      "8152189300"
+      "8152189300",
+      "7239813041"
     ]
   },
   "8454645122": {
@@ -109,6 +110,11 @@
   "6335338057": {
     "referral_code": "sTnxIFsP",
     "referred_by": null,
+    "referred_users": []
+  },
+  "7239813041": {
+    "referral_code": "U4qogj4t",
+    "referred_by": "7646847122",
     "referred_users": []
   }
 }
