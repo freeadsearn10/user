@@ -2,7 +2,9 @@
   "7646847122": {
     "referral_code": "9TqlfzFU",
     "referred_by": null,
-    "referred_users": []
+    "referred_users": [
+      "8152189300"
+    ]
   },
   "8454645122": {
     "referral_code": "wIamcxHy",
@@ -97,6 +99,11 @@
   "7743499484": {
     "referral_code": "LZuCCkU8",
     "referred_by": null,
+    "referred_users": []
+  },
+  "8152189300": {
+    "referral_code": "YJSFF1sG",
+    "referred_by": "7646847122",
     "referred_users": []
   }
 }
