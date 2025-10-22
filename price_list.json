@@ -1,8 +1,8 @@
 {
   "1_day": {
     "duration": "1 Day",
-    "price_bdt": 50,
-    "price_usd": 0.45
+    "price_bdt": 40,
+    "price_usd": 0.35
   },
   "3_days": {
     "duration": "3 Days",
