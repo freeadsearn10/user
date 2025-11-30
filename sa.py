@@ -15,6 +15,7 @@ import zipfile
 import imaplib
 import email
 from email.header import decode_header, make_header
+from email.utils import parsedate_to_datetime
 from datetime import datetime, timedelta, timezone
 
 # --- THIRD-PARTY DEPENDENCIES (AUTO-INSTALL IF MISSING) ---
@@ -116,8 +117,7 @@ MYSQL_DB = "refihzbz_fbchek"
 GMAIL_IMAP_HOST = "imap.gmail.com"
 GMAIL_IMAP_PORT = 993
 GMAIL_USERNAME = os.getenv("GMAIL_USERNAME", "")
-GMAIL_PASSWORD = os.getenv("GMAIL_PASSWORD",_code "new"</)
-"
+GMAIL_PASSWORD = os.getenv("GMAIL_PASSWORD", "")
 
 # --- PREMIUM ADMIN & APPROVAL SYSTEM ---
 
@@ -131,6 +131,13 @@ all_users: dict[str, dict] = {}
 user_settings: dict[str, dict] = {}
 user_last_request: dict[int, datetime] = {}
 config_data: dict[str, int] = {"rate_limit_seconds": DEFAULT_RATE_LIMIT_SECONDS}
+
+# Pending Binance payments (per user) for Gmail verification
+pending_payments: dict[int, dict] = {}
+
+# Processed Gmail payment emails (Message-ID or IMAP-based ID)
+PROCESSED_EMAILS_FILE = os.path.join(DATA_DIR, "processed_emails.json")
+processed_emails: set[str] = set()
 
 price_list = {
     "1_day": {"duration": "1 Day", "price_bdt": 50, "price_usd": 0.45},
@@ -172,9 +179,6 @@ LANGUAGES = {
             "Use /admin to get contact details."
         ),
         "select_payment_method": "💳 Select a payment method:",
-        "payment_binance": "Binance Pay",
-        "select_plan_binance": "Select a plan to pay via Binance Pay:",
-        "binance_invoice_coded": "💳 Select a payment method:",
         "payment_binance": "Binance Pay",
         "select_plan_binance": "Select a plan to pay via Binance Pay:",
         "binance_invoice": (
@@ -682,6 +686,26 @@ async def save_user_settings_to_file() -> bool:
     except Exception as e:
         logger.error("Error saving user_settings to MySQL: %s", e)
     return True
+
+
+async def load_processed_emails_from_file() -> None:
+    """
+    Load list of processed Gmail message IDs from file into the set.
+    """
+    global processed_emails
+    data = await load_json(PROCESSED_EMAILS_FILE, [])
+    if isinstance(data, list):
+        processed_emails = set(str(x) for x in data)
+    else:
+        processed_emails = set()
+
+
+async def save_processed_emails_to_file() -> bool:
+    """
+    Save processed Gmail message IDs to file.
+    """
+    data = list(processed_emails)
+    return await save_json(PROCESSED_EMAILS_FILE, data)
 
 
 async def save_user_details_to_file(user_id: int, user_data: dict) -> bool:
@@ -1283,34 +1307,51 @@ async def auto_cleanup_task(context: ContextTypes.DEFAULT_TYPE) -> None:
         await asyncio.sleep(AUTO_CLEANUP_INTERVAL)
 
 
-def fetch_gmail_payments_sync() -> list[dict]:
+def fetch_latest_binance_payment_for_amount(
+    expected_amount_usd: float, since_iso: str
+) -> dict | None:
     """
-    Blocking helper to fetch payment events from Gmail via IMAP.
+    Blocking helper to fetch the latest Binance payment email from Gmail
+    matching the expected USDT amount and received after a given time.
 
-    Expected format somewhere in the subject or body:
-      TGID: &lt;telegram_user_id&gt;
-      PLAN: &lt;amount&gt; &lt;unit&gt;
-
-    Example:
-      TGID: 123456789
-      PLAN: 7 days
+    Returns a dict with keys:
+      - message_id
+      - subject
+      - amount
+      - date (ISO string)
+    or None if no suitable email is found.
     """
-    events: list[dict] = []
-
     if not GMAIL_USERNAME or not GMAIL_PASSWORD:
-        return events
+        return None
 
     try:
+        try:
+            since_dt = datetime.fromisoformat(since_iso)
+        except Exception:
+            since_dt = datetime.now(timezone.utc) - timedelta(minutes=30)
+
+        if since_dt.tzinfo is None:
+            since_dt = since_dt.replace(tzinfo=timezone.utc)
+
         mail = imaplib.IMAP4_SSL(GMAIL_IMAP_HOST, GMAIL_IMAP_PORT)
         mail.login(GMAIL_USERNAME, GMAIL_PASSWORD)
         mail.select("INBOX")
 
-        typ, data = mail.search(None, "UNSEEN")
+        # Search for recent Binance payment emails
+        typ, data = mail.search(
+            None,
+            "UNSEEN",
+            'FROM "binance"',
+            'SUBJECT "Payment Receive Successful"',
+        )
         if typ != "OK":
             logger.error("Gmail IMAP search failed: %s", typ)
             mail.close()
             mail.logout()
-            return events
+            return None
+
+        best_match: dict | None = None
+        best_date: datetime | None = None
 
         for num in data[0].split():
             typ, msg_data = mail.fetch(num, "(RFC822)")
@@ -1326,6 +1367,29 @@ def fetch_gmail_payments_sync() -> list[dict]:
             except Exception:
                 subject = raw_subject
 
+            from_header = msg.get("From", "")
+            if "binance" not in from_header.lower():
+                continue
+            if "payment receive successful" not in subject.lower():
+                continue
+
+            # Parse date
+            msg_date_str = msg.get("Date")
+            msg_dt = None
+            if msg_date_str:
+                try:
+                    msg_dt = parsedate_to_datetime(msg_date_str)
+                    if msg_dt.tzinfo is None:
+                        msg_dt = msg_dt.replace(tzinfo=timezone.utc)
+                    else:
+                        msg_dt = msg_dt.astimezone(timezone.utc)
+                except Exception:
+                    msg_dt = None
+
+            if msg_dt and msg_dt < since_dt:
+                continue
+
+            # Extract plain text body
             body = ""
             if msg.is_multipart():
                 for part in msg.walk():
@@ -1355,183 +1419,53 @@ def fetch_gmail_payments_sync() -> list[dict]:
 
             text = subject + "\n" + body
 
-            tgid_match = re.search(r"TGID[:=]\s*(\d+)", text, re.IGNORECASE)
-            plan_match = re.search(
-                r"PLAN[:=]\s*(\d+)\s*(hour|hours|day|days|month|months)",
+            amount_match = re.search(
+                r"Amount\s*[:=]\s*([0-9]+(?:\.[0-9]+)?)\s*USDT",
                 text,
                 re.IGNORECASE,
             )
+            if not amount_match:
+                continue
 
-            if tgid_match and plan_match:
-                user_id = int(tgid_match.group(1))
-                amount = int(plan_match.group(1))
-                unit = plan_match.group(2)
-                events.append(
-                    {
-                        "user_id": user_id,
-                        "amount": amount,
-                        "unit": unit,
-                        "subject": subject,
-                    }
-                )
-                # Mark processed so we do not handle again
-                try:
-                    mail.store(num, "+FLAGS", "\\Seen")
-                except Exception:
-                    pass
+            try:
+                amount_val = float(amount_match.group(1))
+            except ValueError:
+                continue
+
+            if abs(amount_val - expected_amount_usd) > 1e-6:
+                continue
+
+            message_id = msg.get("Message-ID")
+            if not message_id:
+                message_id = f"imap-{num.decode(errors='ignore')}"
+
+            if message_id in processed_emails:
+                continue
+
+            # Choose the most recent matching email
+            if msg_dt is None:
+                candidate_better = best_match is None
             else:
-                # Mark as seen so we do not repeatedly parse irrelevant emails
-                try:
-                    mail.store(num, "+FLAGS", "\\Seen")
-                except Exception:
-                    pass
+                if best_date is None:
+                    candidate_better = True
+                else:
+                    candidate_better = msg_dt > best_date
+
+            if candidate_better:
+                best_match = {
+                    "message_id": message_id,
+                    "subject": subject,
+                    "amount": amount_val,
+                    "date": msg_dt.isoformat() if msg_dt else "",
+                }
+                best_date = msg_dt
 
         mail.close()
         mail.logout()
+        return best_match
     except Exception as e:
-        logger.error("Error while checking Gmail for payments: %s", e)
-
-    return events
-
-
-async def process_auto_payment(
-    context: ContextTypes.DEFAULT_TYPE,
-    user_id_to_approve: int,
-    amount: int,
-    unit: str,
-    subject: str,
-) -> None:
-    """
-    Apply a paid plan to a user based on Gmail-detected payment.
-    Behaves similarly to /approve but without needing an Update.
-    """
-    try:
-        now = datetime.now(timezone.utc)
-        base_time = now
-        current_expiry = approved_users.get(user_id_to_approve)
-        if current_expiry is not None and current_expiry > now:
-            base_time = current_expiry
-
-        unit_l = unit.lower()
-
-        if unit_l.startswith("hour"):
-            expiry_date = base_time + timedelta(hours=amount)
-        elif unit_l.startswith("day"):
-            expiry_date = base_time + timedelta(days=amount)
-        elif unit_l.startswith("month"):
-            expiry_date = base_time + timedelta(days=amount * 30)
-        else:
-            await context.bot.send_message(
-                chat_id=ADMIN_ID,
-                text=(
-                    f"⚠️ Gmail payment detected for user {user_id_to_approve}, "
-                    f"but unit '{unit}' is not recognized. Subject: {subject}"
-                ),
-            )
-            return
-
-        # Derive and store plan info (duration and price, if from price_list)
-        plan_duration = f"{amount} {unit_l}"
-        plan_price_bdt = None
-        plan_price_usd = None
-
-        if unit_l.startswith("day"):
-            for value in price_list.values():
-                try:
-                    num_str, unit_str = value["duration"].split()[:2]
-                    num_days = int(num_str)
-                except Exception:
-                    continue
-                if num_days == amount and unit_str.lower().startswith("day"):
-                    plan_duration = value["duration"]
-                    plan_price_bdt = value.get("price_bdt")
-                    plan_price_usd = value.get("price_usd")
-                    break
-
-        user_id_str = str(user_id_to_approve)
-        user_rec = all_users.setdefault(user_id_str, {})
-        user_rec.setdefault("first_name", "")
-        user_rec.setdefault("last_name", "")
-        user_rec.setdefault("username", "")
-        user_rec["last_interaction"] = datetime.now().isoformat()
-        user_rec["plan_duration"] = plan_duration
-        if plan_price_bdt is not None:
-            user_rec["plan_price_bdt"] = plan_price_bdt
-        if plan_price_usd is not None:
-            user_rec["plan_price_usd"] = plan_price_usd
-
-        approved_users[user_id_to_approve] = expiry_date
-
-        await save_all_users_to_file()
-        await save_users_to_file()
-
-        expiry_str = expiry_date.strftime("%Y-%m-%d %H:%M:%S UTC")
-
-        # Notify admin
-        try:
-            await context.bot.send_message(
-                chat_id=ADMIN_ID,
-                text=(
-                    f"✅ Auto-approved user {user_id_to_approve} from Gmail payment.\n"
-                    f"Subject: {subject}\n"
-                    f"Plan: {plan_duration}\n"
-                    f"Expires: {expiry_str}"
-                ),
-            )
-        except Exception as e:
-            logger.error(
-                "Failed to notify admin about Gmail auto-approval for %s: %s",
-                user_id_to_approve,
-                e,
-            )
-
-        # Notify user (if possible)
-        try:
-            await send_user_notification(
-                context,
-                user_id_to_approve,
-                get_text(
-                    user_id_to_approve,
-                    "access_approved",
-                    expiry_date=expiry_str,
-                ),
-            )
-        except Exception as e:
-            logger.error(
-                "Failed to notify user %s after Gmail auto-approval: %s",
-                user_id_to_approve,
-                e,
-            )
-    except Exception as e:
-        logger.error(
-            "Error while auto-approving user %s from Gmail payment: %s",
-            user_id_to_approve,
-            e,
-        )
-
-
-async def check_gmail_for_payments(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Periodic job: check Gmail inbox for payment emails and auto-approve users.
-    """
-    events = await asyncio.get_running_loop().run_in_executor(
-        None, fetch_gmail_payments_sync
-    )
-    if not events:
-        return
-
-    for event in events:
-        await process_auto_payment(
-            context,
-            event["user_id"],
-            event["amount"],
-            event["unit"],
-            event["subject"],
-        )
-
-
-async def gmail_payment_job(context: ContextTypes.DEFAULT_TYPE) -> None:
-    await check_gmail_for_payments(context)
+        logger.error("Error while checking Gmail for Binance payments: %s", e)
+        return None
 
 
 async def export_bot_data() -> io.BytesIO | None:
@@ -1951,7 +1885,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     if query.data.startswith("pay_binance_plan_"):
-        # Show simple invoice with Binance Pay ID
+        # Show invoice with Binance Pay ID and store pending payment
         plan_key = query.data.replace("pay_binance_plan_", "", 1)
         plan = price_list.get(plan_key)
         if not plan:
@@ -1960,6 +1894,14 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
         user_id = query.from_user.id
         admin_username_clean = ADMIN_USERNAME.lstrip("@")
+
+        # Store pending payment info for this user so Verify Payment can use it
+        pending_payments[user_id] = {
+            "plan_key": plan_key,
+            "amount_usd": float(plan.get("price_usd", 0)),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+
         text = get_text(
             user_id,
             "binance_invoice",
@@ -1973,6 +1915,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         keyboard = [
             [
                 InlineKeyboardButton(
+                    "✅ Verify Payment", callback_data=f"verify_binance_{plan_key}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     "💬 Contact Admin",
                     url=f"https://t.me/{admin_username_clean}",
                 )
@@ -1983,6 +1930,140 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await query.edit_message_text(
             text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard)
         )
+        return
+
+    if query.data.startswith("verify_binance_"):
+        # User-triggered Gmail verification for Binance payment
+        plan_key = query.data.replace("verify_binance_", "", 1)
+        user_id = query.from_user.id
+
+        if not GMAIL_USERNAME or not GMAIL_PASSWORD:
+            await query.edit_message_text(
+                "❌ Auto verification is not configured. Please contact the admin."
+            )
+            return
+
+        plan = price_list.get(plan_key)
+        if not plan:
+            await query.edit_message_text("Selected plan not found.")
+            return
+
+        expected_amount = float(plan.get("price_usd", 0))
+        pending = pending_payments.get(user_id)
+        if pending and pending.get("plan_key") == plan_key:
+            since_iso = pending.get("created_at", "")
+        else:
+            # Fallback: look back 30 minutes
+            since_iso = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
+
+        await query.edit_message_text("🔎 Verifying payment, please wait...")
+
+        loop = asyncio.get_running_loop()
+        event = await loop.run_in_executor(
+            None, fetch_latest_binance_payment_for_amount, expected_amount, since_iso
+        )
+
+        if not event:
+            await query.edit_message_text(
+                "❌ Payment not found yet.\n\n"
+                "Make sure you have completed the payment and wait 1–2 minutes, "
+                "then press Verify Payment again. If the problem continues, "
+                "please contact the admin."
+            )
+            return
+
+        message_id = event.get("message_id")
+        subject = event.get("subject", "")
+        if message_id:
+            processed_emails.add(message_id)
+            await save_processed_emails_to_file()
+
+        # Determine expiry based on plan duration, extending existing access if needed
+        now = datetime.now(timezone.utc)
+        current_expiry = approved_users.get(user_id)
+        base_time = now
+        if current_expiry is not None and current_expiry > now:
+            base_time = current_expiry
+
+        duration_str = plan.get("duration", "")
+        amount_days = None
+        amount_hours = None
+        amount_months = None
+        try:
+            num_str, unit_str = duration_str.split()[:2]
+            num_val = int(num_str)
+            unit_l = unit_str.lower()
+            if unit_l.startswith("hour"):
+                amount_hours = num_val
+            elif unit_l.startswith("day"):
+                amount_days = num_val
+            elif unit_l.startswith("month"):
+                amount_months = num_val
+        except Exception:
+            # Default to days=1 if parsing fails
+            amount_days = 1
+
+        if amount_hours is not None:
+            expiry_date = base_time + timedelta(hours=amount_hours)
+        elif amount_months is not None:
+            expiry_date = base_time + timedelta(days=amount_months * 30)
+        else:
+            expiry_days = amount_days if amount_days is not None else 1
+            expiry_date = base_time + timedelta(days=expiry_days)
+
+        approved_users[user_id] = expiry_date
+
+        user_id_str = str(user_id)
+        user_rec = all_users.setdefault(user_id_str, {})
+        user_rec.setdefault("first_name", query.from_user.first_name)
+        user_rec.setdefault("last_name", query.from_user.last_name)
+        user_rec.setdefault("username", query.from_user.username)
+        user_rec["last_interaction"] = datetime.now().isoformat()
+        user_rec["plan_duration"] = duration_str or plan.get("duration", "")
+        user_rec["plan_price_bdt"] = plan.get("price_bdt")
+        user_rec["plan_price_usd"] = plan.get("price_usd")
+
+        await save_all_users_to_file()
+        await save_users_to_file()
+
+        expiry_str = expiry_date.strftime("%Y-%m-%d %H:%M:%S UTC")
+
+        # Notify admin
+        try:
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=(
+                    f"✅ User {user_id} auto-approved via Verify Payment.\n"
+                    f"Plan: {duration_str or plan.get('duration', '')}\n"
+                    f"Expires: {expiry_str}\n"
+                    f"Email subject: {subject}"
+                ),
+            )
+        except Exception as e:
+            logger.error(
+                "Failed to notify admin after Verify Payment for %s: %s",
+                user_id,
+                e,
+            )
+
+        # Update the invoice message to show success
+        await query.edit_message_text(
+            f"✅ Payment verified successfully!\n\n"
+            f"Your access is valid until: {expiry_str}",
+            parse_mode="HTML",
+        )
+
+        # Notify user with localized access_approved message
+        try:
+            await send_user_notification(
+                context,
+                user_id,
+                get_text(user_id, "access_approved", expiry_date=expiry_str),
+            )
+        except Exception as e:
+            logger.error(
+                "Failed to send access_approved notification to %s: %s", user_id, e
+            )
         return
 
     if query.data == "refer":
@@ -3012,6 +3093,7 @@ async def load_all_data() -> None:
         load_all_users_from_file(),
         load_price_list_from_file(),
         load_user_settings_from_file(),
+        load_processed_emails_from_file(),
     )
     try:
         await init_db()
