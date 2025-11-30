@@ -2,6 +2,25 @@
   "1982843307": {
     "referral_code": "KXnOYYQD",
     "referred_by": null,
+    "referred_users": [
+      "7935143379",
+      "7565536557",
+      "1945635428"
+    ]
+  },
+  "7935143379": {
+    "referral_code": "6lEZUsly",
+    "referred_by": "1982843307",
+    "referred_users": []
+  },
+  "7565536557": {
+    "referral_code": "9HPA3sGH",
+    "referred_by": "1982843307",
+    "referred_users": []
+  },
+  "1945635428": {
+    "referral_code": "YyD2AiIo",
+    "referred_by": "1982843307",
     "referred_users": []
   }
 }
