@@ -3000,6 +3000,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     except Exception:
         pass
 
+
 async def load_all_data():
     """Load all data files concurrently on startup and initialise MySQL (if configured)."""
     await asyncio.gather(
@@ -3016,7 +3017,7 @@ async def load_all_data():
         await init_db()
     except Exception as e:
         logger.error(f"Error initialising MySQL database: {e}")
-    )
+
 
 def main():
     """Start the bot."""
@@ -3078,6 +3079,7 @@ def main():
     # Run the bot until the user presses Ctrl-C
     logger.info("Bot is starting...")
     application.run_polling()
+
 
 if __name__ == '__main__':
     main()
