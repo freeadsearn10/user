@@ -1036,6 +1036,15 @@ async def process_referral(
     if referral_count >= 3:
         expiry_date = datetime.now(timezone.utc) + timedelta(hours=2)
         approved_users[referrer_id] = expiry_date
+
+        # Store referral bonus plan info (2 hours free) for this user
+        ref_user_id_str = str(referrer_id)
+        user_rec = all_users.setdefault(ref_user_id_str, {})
+        user_rec["plan_duration"] = "2 hours (referral bonus)"
+        user_rec["plan_price_bdt"] = 0
+        user_rec["plan_price_usd"] = 0.0
+        await save_all_users_to_file()
+
         await save_users_to_file()
         await send_user_notification(
             context,
@@ -1205,6 +1214,23 @@ async def cleanup_expired_users() -> int:
         logger.info("Removed expired user %s", uid)
     await save_users_to_file()
     return len(expired)
+
+
+async def ensure_daily_reset() -> None:
+    """Reset numbers_checked for all users once per day."""
+    today = datetime.now(timezone.utc).date().isoformat()
+    last_reset = config_data.get("last_reset_date")
+    if last_reset == today:
+        return
+
+    for data in all_users.values():
+        if isinstance(data, dict):
+            data["numbers_checked"] = 0
+
+    config_data["last_reset_date"] = today
+    await save_all_users_to_file()
+    await save_config_to_file()
+    logger.info("Daily reset of numbers_checked completed")
 
 
 async def auto_cleanup_task(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1609,42 +1635,143 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 )
                 return
 
-            text = get_text(query.from_user.id, "approved_users") + "\n\n"
-            for uid, expiry in approved_users.items():
+            keyboard: list[list[InlineKeyboardButton]] = []
+            for uid, _ in approved_users.items():
+                user_info = all_users.get(str(uid), {})
+                name = user_info.get("first_name", "Unknown")
                 if uid == ADMIN_ID:
-                    text += f"👑 <code>{uid}</code> (Admin - Permanent)\n"
+                    label = f"👑 {name} (Admin)"
                 else:
-                    if expiry is None:
-                        text += f"👤 <code>{uid}</code> - Permanent Access\n"
-                    else:
-                        expiry_str = expiry.strftime("%Y-%m-%d %H:%M:%S UTC")
-                        text += (
-                            f"👤 <code>{uid}</code> - Expires: <b>{expiry_str}</b>\n"
+                    label = f"👤 {name} ({uid})"
+                keyboard.append(
+                    [
+                        InlineKeyboardButton(
+                            label,
+                            callback_data=f"admin_user_details_approved_{uid}",
                         )
-            await query.edit_message_text(text, parse_mode="HTML")
+                    ]
+                )
+
+            keyboard.append(
+                [InlineKeyboardButton("🔙 Back", callback_data="admin_open_panel")]
+            )
+
+            text = (
+                get_text(query.from_user.id, "approved_users")
+                + "\n\nTap a user to view details."
+            )
+            await query.edit_message_text(
+                text, reply_markup=InlineKeyboardMarkup(keyboard)
+            )
             return
 
         if data == "admin_list_all":
-            total_users = len(all_users)
-            approved_count = max(len(approved_users) - 1, 0)
-            pending_users = total_users - approved_count
-            total_referrals = sum(
-                len(d.get("referred_users", [])) for d in referral_data.values()
+            if not all_users:
+                await query.edit_message_text(
+                    get_text(query.from_user.id, "no_users")
+                )
+                return
+
+            keyboard: list[list[InlineKeyboardButton]] = []
+            for uid, user_data in all_users.items():
+                name = user_data.get("first_name", "Unknown")
+                if uid == str(ADMIN_ID):
+                    label = f"👑 {name} (Admin)"
+                elif int(uid) in approved_users:
+                    label = f"✅ {name} ({uid})"
+                else:
+                    label = f"👤 {name} ({uid})"
+                keyboard.append(
+                    [
+                        InlineKeyboardButton(
+                            label,
+                            callback_data=f"admin_user_details_all_{uid}",
+                        )
+                    ]
+                )
+
+            keyboard.append(
+                [InlineKeyboardButton("🔙 Back", callback_data="admin_open_panel")]
             )
-            total_numbers_checked = sum(
-                u.get("numbers_checked", 0) for u in all_users.values()
+
+            text = (
+                get_text(
+                    query.from_user.id, "all_users", total_users=len(all_users)
+                )
+                + "\n\nTap a user to view details."
             )
-            stats_text = get_text(
-                query.from_user.id,
-                "bot_statistics",
-                total_users=total_users,
-                approved_users=approved_count,
-                pending_users=pending_users,
-                total_referrals=total_referrals,
-                total_numbers_checked=total_numbers_checked,
-                last_updated=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            await query.edit_message_text(
+                text, reply_markup=InlineKeyboardMarkup(keyboard)
             )
-            await query.edit_message_text(stats_text)
+            return
+
+        if data.startswith("admin_user_details_"):
+            # Show per-user details (plan, expiry, total checked)
+            if data.startswith("admin_user_details_approved_"):
+                user_source = "approved"
+                prefix = "admin_user_details_approved_"
+            else:
+                user_source = "all"
+                prefix = "admin_user_details_all_"
+
+            user_id_str = data.replace(prefix, "")
+            try:
+                uid = int(user_id_str)
+            except ValueError:
+                await query.edit_message_text("Invalid user id.")
+                return
+
+            user_data = all_users.get(user_id_str, {})
+            name = html.escape(user_data.get("first_name", "Unknown"))
+            raw_username = user_data.get("username")
+            if raw_username:
+                username = "@" + html.escape(raw_username)
+            else:
+                username = "None"
+            numbers_checked = user_data.get("numbers_checked", 0)
+            language = user_data.get("language", get_user_language(uid))
+
+            is_approved = uid in approved_users
+            if is_approved:
+                expiry = approved_users.get(uid)
+                if expiry is None:
+                    expiry_info = "Permanent access"
+                else:
+                    expiry_info = expiry.strftime("%Y-%m-%d %H:%M:%S UTC")
+            else:
+                expiry_info = "Not approved"
+
+            plan_duration = user_data.get("plan_duration")
+            plan_bdt = user_data.get("plan_price_bdt")
+            plan_usd = user_data.get("plan_price_usd")
+            if plan_duration:
+                if plan_bdt is not None and plan_usd is not None:
+                    plan_info = f"{plan_duration} - {plan_bdt} BDT / {plan_usd} USD"
+                else:
+                    plan_info = plan_duration
+            else:
+                plan_info = "Not set"
+
+            details = (
+                "👤 User Details\n\n"
+                f"ID: {uid}\n"
+                f"Name: {name}\n"
+                f"Username: {username}\n"
+                f"Language: {language}\n"
+                f"Numbers checked (last 24h): {numbers_checked}\n"
+                f"Approved: {'Yes' if is_approved else 'No'}\n"
+                f"Expiry: {expiry_info}\n"
+                f"Plan: {plan_info}\n"
+            )
+
+            back_cb = "admin_list_approved" if user_source == "approved" else "admin_list_all"
+            keyboard = [[InlineKeyboardButton("🔙 Back", callback_data=back_cb)]]
+
+            await query.edit_message_text(
+                details,
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+            )
             return
 
         if data == "admin_help_approve":
@@ -1805,6 +1932,33 @@ async def approve(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             )
             return
 
+        # Derive and store plan info (duration and price, if from price_list)
+        plan_duration = f"{amount} {unit}"
+        plan_price_bdt = None
+        plan_price_usd = None
+
+        if unit.startswith("day"):
+            for value in price_list.values():
+                try:
+                    num_str, unit_str = value["duration"].split()[:2]
+                    num_days = int(num_str)
+                except Exception:
+                    continue
+                if num_days == amount and unit_str.lower().startswith("day"):
+                    plan_duration = value["duration"]
+                    plan_price_bdt = value.get("price_bdt")
+                    plan_price_usd = value.get("price_usd")
+                    break
+
+        user_id_str = str(user_id_to_approve)
+        user_rec = all_users.setdefault(user_id_str, {})
+        user_rec["plan_duration"] = plan_duration
+        if plan_price_bdt is not None:
+            user_rec["plan_price_bdt"] = plan_price_bdt
+        if plan_price_usd is not None:
+            user_rec["plan_price_usd"] = plan_price_usd
+        await save_all_users_to_file()
+
         approved_users[user_id_to_approve] = expiry_date
         expiry_str = expiry_date.strftime("%Y-%m-%d %H:%M:%S UTC")
 
@@ -1819,7 +1973,6 @@ async def approve(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             )
         )
 
-        user_id_str = str(user_id_to_approve)
         if user_id_str in all_users:
             await send_user_notification(
                 context,
@@ -2225,6 +2378,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     user_id = user.id
 
     await track_user(user, update)
+    await ensure_daily_reset()
 
     user_data = {
         "id": user.id,
