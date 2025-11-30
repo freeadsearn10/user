@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import logging
 import json
 import concurrent.futures
@@ -31,9 +33,21 @@ except ImportError:
     from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters, CallbackQueryHandler
     from telegram.error import BadRequest
 
-# --- NEW IMPORTS FOR ASYNC OPERATIONS ---tryt:    importp aiofiles  # For async file I/Oexceptx ImportError:   : subprocess.check_call([sys.executable, "-m", "pip", "install", "aiofiles"])   ] import aiofiles
-try:    import httpix  # For async HTTP requestsexcepte ImportError:   r subprocess.check_call([sys.executable, "-m", "pip", "install", "httpx"])   " import httpx
-# Ensure cryptography is    import aiomysql  # For async MySQL database access
+# --- NEW IMPORTS FOR ASYNC OPERATIONS ---
+try:
+    import aiofiles  # For async file I/O
+except ImportError:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "aiofiles"])
+    import aiofiles
+
+try:
+    import httpx  # For async HTTP requests
+except ImportError:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "httpx"])
+    import httpx
+
+try:
+    import aiomysql  # For async MySQL database access
 except ImportError:
     subprocess.check_call([sys.executable, "-m", "pip", "install", "aiomysql"])
     import aiomysql
@@ -972,23 +986,10 @@ async def track_user(user, update: Update = None):
         await save_all_users_to_file()
 
 # --- HELPER FUNCTIONS ---
-
-# --- REFACTORED with httpx ---
-async def check_facebook_number(client: httpx.AsyncClient, phone_number: str):
-    """Checks a specific phone number asynchronously and returns its status."""
-    data = base_data.copy()
-    data['email'] = phone_number
-
-    try:
-        response = await client.post(url, headers=headers, cookies=cookies, data=data)
-        response.raise_for_status()
-
-        response_text = response.text
-        if response_text.startswith('for (;;);'):
-            json_string = response_text[9:]
-            data_json = json.loads(json_string)
-        else:
-            data_json = json.loads(response_text)
+# --- REFACTORED with httpx ---asyncy def check_facebook_number(client: httpx.AsyncClient, phone_number: str):   e data = base_data.copy()     data['email'] = phone_nu_code
+rns its status."""   t data = base_data.copy()   a data['email'] = phone_number
+    try:        responsey = await client.post(url, headers=headers, cookies=cookies, data=data)       s response.raise_for_status()
+        response_text = response.text       x if response_text.startswith('for (;;);'):           h json_string = response_text[9:]           e data_json = json.loads(json_string)       o else:           n data_json = json.loads        data_json = json.loads(response_text)
 
         if 'jsmods' in data_json and 'require' in data_json['jsmods']:
             for requirement in data_json['jsmods']['require']:
