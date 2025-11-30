@@ -3323,8 +3323,15 @@ def main() -> None:
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
     )
 
-    # Schedule periodic cleanup of expired users (every 60 seconds)
-    application.job_queue.run_repeating(cleanup_job, interval=60, first=60)
+    # Schedule periodic cleanup of expired users (every 60 seconds) if JobQueue is available
+    jq = getattr(application, "job_queue", None)
+    if jq is not None:
+        jq.run_repeating(cleanup_job, interval=60, first=60)
+    else:
+        logger.warning(
+            "JobQueue not available. Auto cleanup is disabled. "
+            'Install python-telegram-bot with "job-queue" extra to enable it.'
+        )
 
     logger.info("Bot is starting...")
     application.run_polling()
