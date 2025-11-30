@@ -2784,6 +2784,7 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     )
 
+
 async def broadcast_approved(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin command to broadcast a message to approved users only."""
     if update.effective_user.id != ADMIN_ID:
@@ -2813,6 +2814,7 @@ async def broadcast_approved(update: Update, context: ContextTypes.DEFAULT_TYPE)
             success_count=success_count,
             fail_count=fail_count
         )
+    )
     )
 
 
