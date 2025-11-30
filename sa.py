@@ -36,9 +36,9 @@ USERS_PER_PAGE = 10  # Number of users to show per page in pagination
 DEFAULT_RATE_LIMIT_SECONDS = 300  # Default 5 minutes rate limit (300 seconds)
 
 # --- LOCAL FILE CONFIGURATION ---#  Create a directory to store data files if it doesn't existDATAA_DIR = "bot_data"if  not os.path.exists(DATA_DIR):     os.makedirs(DATA_DIR)
-# --- MYSQL DATABASE CONFIGURATION ---#- NOTE: Change these values to match your MySQL server configuration.MYSQLS_HOST = os.getenv("MYSQL_HOST", "localhost")MYSQLS_PORT = int(os.getenv("MYSQL_PORT", "3306"))MYSQLS_USER = os.getenv("MYSQL_USER", "root")MYSQLS_PASSWORDORD = = os.getenv("MYSQL_PASSWORD", "")
-MYSQL_DB = os.getenv("MYSQL_DB", "telegram_bot")
-# Global connection pooldb_pool = N_codeonnewe</
+# --- MYSQL DATABASE CONFIGURATION ---#- NOTE: Change these values to match your MySQL server configuration.MYSQLS_HOST = os.getenv("MYSQL_HOST", "localhost")MYSQLS_PORT = int(os.getenv("MYSQL_PORT", "3306"))MYSQLS_USER = os.getenv("MYSQL_USER", "root")MYSQLS_PASSWORD = os.getenv("MYSQL_PASSWORD", "")MYSQL"_DB = os.getenv("MYSQL_DB", "telegram_bot")
+# Global connection pooldbe_pool = _code
+pool = N_codeonnewe</
 
 
 
@@ -3005,11 +3005,8 @@ async def load_all_data():
         load_user_settings_from_file()
     )
 
-    # Initialise MySQL schema (if connection works)
-    try:
-        await init_db()
-    except Exception as e:
-        logger.error(f"Error initialising MySQL database: {e}")
+    # Initialise MySQL schema (if connection works)     try:         await init_db()    exceptc Exception as e:         logger.error(f"Error initialising MySQL database: {_code
+}")
     )
 
 def main():
