@@ -1416,8 +1416,16 @@ async def show_price_list(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def show_admin_commands(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show admin commands as an inline button menu."""
     user = update.effective_user
+    unauthorized_text = get_text(user.id, "unauthorized")
+
+    # Handle unauthorized access both for commands and callbacks
     if user.id != ADMIN_ID:
-        await update.message.reply_text(get_text(user.id, "unauthorized"))
+        if getattr(update, "message", None) is not None:
+            await update.message.reply_text(unauthorized_text)
+        else:
+            query = getattr(update, "callback_query", None)
+            if query is not None:
+                await query.edit_message_text(unauthorized_text)
         return
 
     keyboard = [
@@ -1448,7 +1456,15 @@ async def show_admin_commands(update: Update, context: ContextTypes.DEFAULT_TYPE
         ],
     ]
     msg = get_text(user.id, "admin_panel")
-    await update.message.reply_html(msg, reply_markup=InlineKeyboardMarkup(keyboard))
+    markup = InlineKeyboardMarkup(keyboard)
+
+    # If called from a normal message (/cmd), reply; if from a callback, edit the message
+    if getattr(update, "message", None) is not None:
+        await update.message.reply_html(msg, reply_markup=markup)
+    else:
+        query = getattr(update, "callback_query", None)
+        if query is not None:
+            await query.edit_message_text(msg, reply_markup=markup, parse_mode="HTML")
 
 
 async def referral_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1775,34 +1791,57 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             return
 
         if data == "admin_help_approve":
+            back_kb = InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 Back", callback_data="admin_open_panel")]]
+            )
             await query.edit_message_text(
-                get_text(query.from_user.id, "usage_approve"), parse_mode="HTML"
+                get_text(query.from_user.id, "usage_approve"),
+                parse_mode="HTML",
+                reply_markup=back_kb,
             )
             return
 
         if data == "admin_help_disapprove":
+            back_kb = InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 Back", callback_data="admin_open_panel")]]
+            )
             await query.edit_message_text(
-                get_text(query.from_user.id, "usage_disapprove"), parse_mode="HTML"
+                get_text(query.from_user.id, "usage_disapprove"),
+                parse_mode="HTML",
+                reply_markup=back_kb,
             )
             return
 
         if data == "admin_help_broadcast":
+            back_kb = InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 Back", callback_data="admin_open_panel")]]
+            )
             await query.edit_message_text(
-                get_text(query.from_user.id, "usage_broadcast"), parse_mode="HTML"
+                get_text(query.from_user.id, "usage_broadcast"),
+                parse_mode="HTML",
+                reply_markup=back_kb,
             )
             return
 
         if data == "admin_help_broadcast_approved":
+            back_kb = InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 Back", callback_data="admin_open_panel")]]
+            )
             await query.edit_message_text(
                 get_text(query.from_user.id, "usage_broadcast_approved"),
                 parse_mode="HTML",
+                reply_markup=back_kb,
             )
             return
 
         if data == "admin_help_setratelimit":
+            back_kb = InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 Back", callback_data="admin_open_panel")]]
+            )
             await query.edit_message_text(
                 get_text(query.from_user.id, "usage_setratelimit"),
                 parse_mode="HTML",
+                reply_markup=back_kb,
             )
             return
 
@@ -1822,13 +1861,19 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             ok_settings = await save_user_settings_to_file()
             ok_config = await save_config_to_file()
 
+            back_kb = InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 Back", callback_data="admin_open_panel")]]
+            )
+
             if all([ok_users, ok_ref, ok_all, ok_price, ok_settings, ok_config]):
                 await query.edit_message_text(
-                    get_text(query.from_user.id, "sync_success")
+                    get_text(query.from_user.id, "sync_success"),
+                    reply_markup=back_kb,
                 )
             else:
                 await query.edit_message_text(
-                    get_text(query.from_user.id, "sync_failed")
+                    get_text(query.from_user.id, "sync_failed"),
+                    reply_markup=back_kb,
                 )
             return
 
@@ -1837,8 +1882,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 get_text(query.from_user.id, "cleanup_expired")
             )
             removed = await cleanup_expired_users()
+            back_kb = InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 Back", callback_data="admin_open_panel")]]
+            )
             await query.edit_message_text(
-                get_text(query.from_user.id, "cleanup_complete", count=removed)
+                get_text(query.from_user.id, "cleanup_complete", count=removed),
+                reply_markup=back_kb,
             )
             return
 
@@ -1847,6 +1896,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 get_text(query.from_user.id, "export_data_msg")
             )
             zip_buffer = await export_bot_data()
+            back_kb = InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 Back", callback_data="admin_open_panel")]]
+            )
             if zip_buffer:
                 ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                 filename = f"bot_data_{ts}.zip"
@@ -1857,11 +1909,13 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     caption=get_text(query.from_user.id, "export_complete"),
                 )
                 await query.edit_message_text(
-                    get_text(query.from_user.id, "export_complete")
+                    get_text(query.from_user.id, "export_complete"),
+                    reply_markup=back_kb,
                 )
             else:
                 await query.edit_message_text(
-                    "❌ Failed to export data. Please check the logs."
+                    "❌ Failed to export data. Please check the logs.",
+                    reply_markup=back_kb,
                 )
             return
 
@@ -1872,7 +1926,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     f"🔹 <b>{value['duration']}</b>: "
                     f"{value['price_bdt']} BDT / {value['price_usd']} USD\n"
                 )
-            await query.edit_message_text(text, parse_mode="HTML")
+            back_kb = InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 Back", callback_data="admin_open_panel")]]
+            )
+            await query.edit_message_text(text, parse_mode="HTML", reply_markup=back_kb)
             return
 
     return
