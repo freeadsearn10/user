@@ -116,8 +116,9 @@ MYSQL_DB = "refihzbz_fbchek"
 # The bot will automatically poll this Gmail inbox for payment emails.
 GMAIL_IMAP_HOST = "imap.gmail.com"
 GMAIL_IMAP_PORT = 993
-GMAIL_USERNAME = os.getenv("GMAIL_USERNAME", "")
-GMAIL_PASSWORD = os.getenv("GMAIL_PASSWORD", "")
+# Defaults are set to your app email; override via environment variables in production.
+GMAIL_USERNAME = os.getenv("GMAIL_USERNAME", "songall558@gmail.com")
+GMAIL_PASSWORD = os.getenv("GMAIL_PASSWORD", "qxkt jsvq euzg pbpe")
 
 # --- PREMIUM ADMIN & APPROVAL SYSTEM ---
 
@@ -182,22 +183,23 @@ LANGUAGES = {
         "payment_binance": "Binance Pay",
         "select_plan_binance": "Select a plan to pay via Binance Pay:",
         "binance_invoice": (
-            "Binance Pay Invoice\\n\\n"
-            "Plan: {duration}\\n"
-            "Amount: {price_bdt} BDT (approx. {price_usd} USD)\\n\\n"
-            "Pay exactly {price_usd} USD via Binance Pay to this Pay ID:\\n"
-            "{pay_id}\\n\\n"
-            "After payment, send screenshot or transaction ID to the admin "
-            "(@{admin_username}) and wait for approval."
+            "🧾 <b>Binance Pay Invoice</b>\\n\\n"
+            "📦 Plan: <b>{duration}</b>\\n"
+            "💰 Amount: <b>{price_bdt} BDT</b> (≈ {price_usd} USD)\\n\\n"
+            "➡️ Pay exactly <b>{price_usd} USD</b> via Binance Pay to this Pay ID:\\n"
+            "<code>{pay_id}</code>\\n\\n"
+            "✅ After paying, tap <b>Verify Payment</b> below.\\n"
+            "If there is any issue, contact @{admin_username}.\\n\\n"
+            "📧 Admin email: songall558@gmail.com"
         ),
         "refer_link": (
-            "🔗 Your Referral Link\\n\\n"
+            "🔗 <b>Your Referral Link</b>\\n\\n"
             "Share this link with your friends:\\n{referral_link}\\n\\n"
-            "Referrals: {referral_count}/3\\n"
+            "👥 Referrals: <b>{referral_count}/3</b>\\n"
         ),
         "refer_earned": "✅ You've earned 2 hours of free access!\\n",
         "refer_needed": (
-            "❌ You need {remaining} more referral(s) to get 2 hours of free access.\\n"
+            "❌ You need <b>{remaining}</b> more referral(s) to get 2 hours of free access.\\n"
         ),
         "referral_status": (
             "🔗 Your Referral Status\\n\\n"
@@ -360,22 +362,23 @@ LANGUAGES = {
         "payment_binance": "Binance Pay",
         "select_plan_binance": "Binance Pay দিয়ে পেমেন্ট করতে একটি প্ল্যান নির্বাচন করুন:",
         "binance_invoice": (
-            "🧾 <b>Binance Pay ইনভয়েস</b>\n\n"
-            "প্ল্যান: <b>{duration}</b>\n"
-            "পরিমাণ: <b>{price_bdt} BDT</b> (≈ {price_usd} USD)\n\n"
-            "Binance Pay এর মাধ্যমে ঠিক <b>{price_usd} USD</b> এই Pay ID তে পাঠান:\n"
-            "<code>{pay_id}</code>\n\n"
-            "পেমেন্ট সম্পন্ন করার পর অ্যাডমিনকে (@{admin_username}) স্ক্রিনশট বা "
-            "ট্রানজ্যাকশন আইডি পাঠান এবং অনুমোদনের জন্য অপেক্ষা করুন।"
+            "🧾 <b>Binance Pay ইনভয়েস</b>\\n\\n"
+            "📦 প্ল্যান: <b>{duration}</b>\\n"
+            "💰 পরিমাণ: <b>{price_bdt} BDT</b> (≈ {price_usd} USD)\\n\\n"
+            "➡️ Binance Pay দিয়ে ঠিক <b>{price_usd} USD</b> এই Pay ID তে পাঠান:\\n"
+            "<code>{pay_id}</code>\\n\\n"
+            "✅ পেমেন্ট করার পর নিচের <b>Verify Payment</b> বাটনে চাপ দিন।\\n"
+            "সমস্যা হলে @{admin_username} এর সাথে যোগাযোগ করুন।\\n\\n"
+            "📧 Admin email: songall558@gmail.com"
         ),
         "refer_link": (
-            "🔗 আপনার রেফারেল লিঙ্ক\n\n"
-            "আপনার বন্ধুদের সাথে এই লিঙ্কটি শেয়ার করুন:\n{referral_link}\n\n"
-            "রেফারেল: {referral_count}/3\n"
+            "🔗 <b>আপনার রেফারেল লিঙ্ক</b>\\n\\n"
+            "আপনার বন্ধুদের সাথে এই লিঙ্কটি শেয়ার করুন:\\n{referral_link}\\n\\n"
+            "👥 রেফারেল: <b>{referral_count}/3</b>\\n"
         ),
-        "refer_earned": "✅ আপনি রেফারেলের মাধ্যমে 2 ঘন্টার ফ্রি অ্যাক্সেস অর্জন করেছেন!\n",
+        "refer_earned": "✅ আপনি রেফারেলের মাধ্যমে 2 ঘন্টার ফ্রি অ্যাক্সেস অর্জন করেছেন!\\n",
         "refer_needed": (
-            "❌ 2 ঘন্টার ফ্রি অ্যাক্সেস পেতে আপনার {remaining} আরও রেফারেল(স) প্রয়োজন।\n"
+            "❌ 2 ঘন্টার ফ্রি অ্যাক্সেস পেতে আপনার আরও <b>{remaining}</b> টি রেফারেল প্রয়োজন।\\n"
         ),
         "referral_status": (
             "🔗 আপনার রেফারেল স্ট্যাটাস\n\n"
@@ -1655,7 +1658,7 @@ async def show_admin_commands(update: Update, context: ContextTypes.DEFAULT_TYPE
     keyboard = [
         [
             InlineKeyboardButton("✅ Approved users", callback_data="admin_list_approved"),
-            InlineKeyboardButton("📊 Stats", callback_data="admin_list_all"),
+            InlineKeyboardButton("👥 All users", callback_data="admin_list_all"),
         ],
         [
             InlineKeyboardButton("➕ Approve user", callback_data="admin_help_approve"),
@@ -1956,7 +1959,28 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             # Fallback: look back 30 minutes
             since_iso = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
 
-        await query.edit_message_text("🔎 Verifying payment, please wait...")
+        admin_username_clean = ADMIN_USERNAME.lstrip("@")
+
+        # Keep the same keyboard so user can retry Verify Payment if needed
+        verify_keyboard = [
+            [
+                InlineKeyboardButton(
+                    "✅ Verify Payment", callback_data=f"verify_binance_{plan_key}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "💬 Contact Admin",
+                    url=f"https://t.me/{admin_username_clean}",
+                )
+            ],
+            [InlineKeyboardButton("🔙 Back", callback_data="pay_binance")],
+        ]
+
+        await query.edit_message_text(
+            "🔎 Verifying payment, please wait...",
+            reply_markup=InlineKeyboardMarkup(verify_keyboard),
+        )
 
         loop = asyncio.get_running_loop()
         event = await loop.run_in_executor(
@@ -1965,10 +1989,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
         if not event:
             await query.edit_message_text(
-                "❌ Payment not found yet.\n\n"
+                "❌ Payment not found yet.\\n\\n"
                 "Make sure you have completed the payment and wait 1–2 minutes, "
                 "then press Verify Payment again. If the problem continues, "
-                "please contact the admin."
+                "please contact the admin.",
+                reply_markup=InlineKeyboardMarkup(verify_keyboard),
             )
             return
 
@@ -2046,9 +2071,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 e,
             )
 
-        # Update the invoice message to show success
+        # Update the invoice message to show success and remove Verify button
         await query.edit_message_text(
-            f"✅ Payment verified successfully!\n\n"
+            f"✅ Payment verified successfully!\\n\\n"
             f"Your access is valid until: {expiry_str}",
             parse_mode="HTML",
         )
