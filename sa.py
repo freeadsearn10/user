@@ -35,10 +35,8 @@ AUTO_CLEANUP_INTERVAL = 100  # Auto cleanup every hour (in seconds)
 USERS_PER_PAGE = 10  # Number of users to show per page in pagination
 DEFAULT_RATE_LIMIT_SECONDS = 300  # Default 5 minutes rate limit (300 seconds)
 
-# --- LOCAL FILE CONFIGURATION ---# Createt a directory to store data files if it doesn't existDATAA_DIR = "bot_data"if notn os.path.exists(DATA_DIR):    os .makedirs(DATA_DIR)
-# --- MYSQL DATABASE CONFIGURATION ---# NOTE: Change these values to match your MySQL server configuration.
-MYSQL_HOST = os.getenv("MYSQL_HOST", "localhost")MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3306"))
-MYSQL_USER = os.getenv("MYSQL_USER", "root")MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "")
+# --- LOCAL FILE CONFIGURATION ---#  Create a directory to store data files if it doesn't existDATAA_DIR = "bot_data"if  not os.path.exists(DATA_DIR):     os.makedirs(DATA_DIR)
+# --- MYSQL DATABASE CONFIGURATION ---#- NOTE: Change these values to match your MySQL server configuration.MYSQLY_HOST = os.getenv("MYSQL_HOST", "localhost")MYSQLS_PORT = int(os.getenv("MYSQL_PORT", "3306"))MYSQLY_USER = os.getenv("MYSQL_USER", "root")MYSQLS_PASSWORD = = os.getenv("MYSQL_PASSWORD", "")
 MYSQL_DB = os.getenv("MYSQL_DB", "telegram_bot")
 # Global connection pooldb_pool = N_codeonnewe</
 
