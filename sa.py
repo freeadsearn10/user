@@ -19,6 +19,7 @@ import io  # Added for in-memory file operations
 # --- NEW IMPORTS FOR ASYNC OPERATIONS ---
 import aiofiles  # For async file I/O
 import httpx     # For async HTTP requests
+import aiomysql  # For async MySQL database access
 
 # Enable logging to see errors
 logging.basicConfig(
@@ -34,11 +35,19 @@ AUTO_CLEANUP_INTERVAL = 100  # Auto cleanup every hour (in seconds)
 USERS_PER_PAGE = 10  # Number of users to show per page in pagination
 DEFAULT_RATE_LIMIT_SECONDS = 300  # Default 5 minutes rate limit (300 seconds)
 
-# --- LOCAL FILE CONFIGURATION ---
-# Create a directory to store data files if it doesn't exist
-DATA_DIR = "bot_data"
-if not os.path.exists(DATA_DIR):
-    os.makedirs(DATA_DIR)
+# --- LOCAL FILE CONFIGURATION ---# Createt a directory to store data files if it doesn't existDATAA_DIR = "bot_data"if notn os.path.exists(DATA_DIR):    os .makedirs(DATA_DIR)
+# --- MYSQL DATABASE CONFIGURATION ---# NOTE: Change these values to match your MySQL server configuration.
+MYSQL_HOST = os.getenv("MYSQL_HOST", "localhost")MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3306"))
+MYSQL_USER = os.getenv("MYSQL_USER", "root")MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "")
+MYSQL_DB = os.getenv("MYSQL_DB", "telegram_bot")
+# Global connection pooldb_pool = N_codeonnewe</
+
+
+
+
+
+
+DIR)
 
 USER_DATA_FILE = os.path.join(DATA_DIR, "approved_users.json")
 REFERRAL_DATA_FILE = os.path.join(DATA_DIR, "referral_data.json")
@@ -324,14 +333,19 @@ async def load_config_from_file():
         logger.error(f"Error loading config from file: {e}")
 
 async def save_config_to_file():
-    """Save config to local file asynchronously."""
+    """Save config to local file asynchronously and mirror to MySQL."""
     try:
         async with aiofiles.open(CONFIG_FILE, 'w') as f:
             await f.write(json.dumps(config_data, indent=2))
         logger.info("Successfully saved config to file")
-        return True
     except Exception as e:
         logger.error(f"Error saving config to file: {e}")
+
+    try:
+        await save_config_to_db()
+        return True
+    except Exception as e:
+        logger.error(f"Error saving config to MySQL: {e}")
         return False
 
 async def load_users_from_file():
@@ -428,7 +442,7 @@ async def load_user_settings_from_file():
         user_settings = {}
 
 async def save_users_to_file():
-    """Save approved users to local file asynchronously."""
+    """Save approved users to local file asynchronously and mirror to MySQL."""
     try:
         users_to_save = {}
         for user_id, expiry_date in approved_users.items():
@@ -441,31 +455,47 @@ async def save_users_to_file():
             await f.write(json.dumps(users_to_save, indent=2))
 
         logger.info(f"Successfully saved {len(approved_users)} users to file")
-        return True
     except Exception as e:
         logger.error(f"Error saving users to file: {e}")
+
+    # Mirror to MySQL (best effort)
+    try:
+        await save_users_to_db()
+        return True
+    except Exception as e:
+        logger.error(f"Error saving users to MySQL: {e}")
         return False
 
 async def save_all_users_to_file():
-    """Save all users to local file asynchronously."""
+    """Save all users to local file asynchronously and mirror to MySQL."""
     try:
         async with aiofiles.open(ALL_USERS_FILE, 'w') as f:
             await f.write(json.dumps(all_users, indent=2))
         logger.info("Successfully saved all users to file")
-        return True
     except Exception as e:
         logger.error(f"Error saving all users to file: {e}")
+
+    try:
+        await save_all_users_to_db()
+        return True
+    except Exception as e:
+        logger.error(f"Error saving all users to MySQL: {e}")
         return False
 
 async def save_referral_data_to_file():
-    """Save referral data to local file asynchronously."""
+    """Save referral data to local file asynchronously and mirror to MySQL."""
     try:
         async with aiofiles.open(REFERRAL_DATA_FILE, 'w') as f:
             await f.write(json.dumps(referral_data, indent=2))
         logger.info("Successfully saved referral data to file")
-        return True
     except Exception as e:
         logger.error(f"Error saving referral data to file: {e}")
+
+    try:
+        await save_referral_data_to_db()
+        return True
+    except Exception as e:
+        logger.error(f"Error saving referral data to MySQL: {e}")
         return False
 
 async def save_price_list_to_file():
@@ -480,18 +510,23 @@ async def save_price_list_to_file():
         return False
 
 async def save_user_settings_to_file():
-    """Save user settings to local file asynchronously."""
+    """Save user settings to local file asynchronously and mirror to MySQL."""
     try:
         async with aiofiles.open(USER_SETTINGS_FILE, 'w') as f:
             await f.write(json.dumps(user_settings, indent=2))
         logger.info("Successfully saved user settings to file")
-        return True
     except Exception as e:
         logger.error(f"Error saving user settings to file: {e}")
+
+    try:
+        await save_user_settings_to_db()
+        return True
+    except Exception as e:
+        logger.error(f"Error saving user settings to MySQL: {e}")
         return False
 
 async def save_user_details_to_file(user_id, user_data):
-    """Save specific user details to local file asynchronously."""
+    """Save specific user details to local file asynchronously and mirror to MySQL if configured."""
     try:
         users_dir = os.path.join(DATA_DIR, "users")
         if not os.path.exists(users_dir):
@@ -502,10 +537,257 @@ async def save_user_details_to_file(user_id, user_data):
             await f.write(json.dumps(user_data, indent=2))
 
         logger.info(f"Successfully saved user {user_id} details to file")
-        return True
     except Exception as e:
         logger.error(f"Error saving user {user_id} details to file: {e}")
+
+    # Mirror to MySQL (best effort, does not affect local file flow)
+    try:
+        await save_user_to_db(user_id, user_data)
+        return True
+    except Exception as e:
+        logger.error(f"Error saving user {user_id} details to MySQL: {e}")
         return False
+
+
+# --- MYSQL DATABASE HELPERS ---
+
+async def get_db_pool():
+    """Get (or create) a global aiomysql connection pool."""
+    global db_pool
+    if db_pool is not None:
+        return db_pool
+
+    try:
+        db_pool = await aiomysql.create_pool(
+            host=MYSQL_HOST,
+            port=MYSQL_PORT,
+            user=MYSQL_USER,
+            password=MYSQL_PASSWORD,
+            db=MYSQL_DB,
+            autocommit=True,
+            minsize=1,
+            maxsize=10
+        )
+        logger.info("MySQL connection pool created successfully")
+    except Exception as e:
+        logger.error(f"Failed to create MySQL pool: {e}")
+        db_pool = None
+
+    return db_pool
+
+
+async def init_db():
+    """Create required tables if they do not exist."""
+    pool = await get_db_pool()
+    if pool is None:
+        # If MySQL is not configured / not reachable, silently skip
+        return
+
+    create_table_queries = [
+        """
+        CREATE TABLE IF NOT EXISTS approved_users (
+            user_id BIGINT PRIMARY KEY,
+            expiry_datetime DATETIME NULL
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS all_users (
+            user_id BIGINT PRIMARY KEY,
+            first_name VARCHAR(255),
+            last_name VARCHAR(255),
+            username VARCHAR(255),
+            last_interaction DATETIME,
+            numbers_checked INT DEFAULT 0
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS referral_data (
+            user_id BIGINT PRIMARY KEY,
+            referral_code VARCHAR(64),
+            referred_by BIGINT NULL,
+            referred_users_json TEXT
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS user_settings (
+            user_id BIGINT PRIMARY KEY,
+            language VARCHAR(8)
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS config (
+            config_key VARCHAR(64) PRIMARY KEY,
+            config_value TEXT
+        )
+        """
+    ]
+
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            for q in create_table_queries:
+                try:
+                    await cur.execute(q)
+                except Exception as e:
+                    logger.error(f"Error creating table: {e}")
+
+
+async def save_users_to_db():
+    """Mirror in-memory approved_users dict to MySQL approved_users table."""
+    pool = await get_db_pool()
+    if pool is None:
+        return
+
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            try:
+                await cur.execute("DELETE FROM approved_users")
+                for user_id, expiry in approved_users.items():
+                    # store None as NULL
+                    expiry_str = expiry.strftime("%Y-%m-%d %H:%M:%S") if expiry is not None else None
+                    await cur.execute(
+                        "REPLACE INTO approved_users (user_id, expiry_datetime) VALUES (%s, %s)",
+                        (int(user_id), expiry_str),
+                    )
+            except Exception as e:
+                logger.error(f"Error saving approved_users to MySQL: {e}")
+
+
+async def save_all_users_to_db():
+    """Mirror in-memory all_users dict to MySQL all_users table."""
+    pool = await get_db_pool()
+    if pool is None:
+        return
+
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            try:
+                await cur.execute("DELETE FROM all_users")
+                for user_id_str, data in all_users.items():
+                    user_id = int(user_id_str)
+                    first_name = data.get("first_name")
+                    last_name = data.get("last_name")
+                    username = data.get("username")
+                    last_interaction = data.get("last_interaction")
+                    numbers_checked = data.get("numbers_checked", 0)
+                    await cur.execute(
+                        """
+                        REPLACE INTO all_users (user_id, first_name, last_name, username, last_interaction, numbers_checked)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        """,
+                        (user_id, first_name, last_name, username, last_interaction, numbers_checked),
+                    )
+            except Exception as e:
+                logger.error(f"Error saving all_users to MySQL: {e}")
+
+
+async def save_referral_data_to_db():
+    """Mirror in-memory referral_data dict to MySQL referral_data table."""
+    pool = await get_db_pool()
+    if pool is None:
+        return
+
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            try:
+                await cur.execute("DELETE FROM referral_data")
+                for user_id_str, data in referral_data.items():
+                    user_id = int(user_id_str)
+                    referral_code = data.get("referral_code")
+                    referred_by = data.get("referred_by")
+                    referred_users = data.get("referred_users", [])
+                    referred_users_json = json.dumps(referred_users)
+                    await cur.execute(
+                        """
+                        REPLACE INTO referral_data (user_id, referral_code, referred_by, referred_users_json)
+                        VALUES (%s, %s, %s, %s)
+                        """,
+                        (user_id, referral_code, int(referred_by) if referred_by else None, referred_users_json),
+                    )
+            except Exception as e:
+                logger.error(f"Error saving referral_data to MySQL: {e}")
+
+
+async def save_user_settings_to_db():
+    """Mirror in-memory user_settings dict to MySQL user_settings table."""
+    pool = await get_db_pool()
+    if pool is None:
+        return
+
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            try:
+                await cur.execute("DELETE FROM user_settings")
+                for user_id_str, data in user_settings.items():
+                    user_id = int(user_id_str)
+                    language = data.get("language")
+                    await cur.execute(
+                        """
+                        REPLACE INTO user_settings (user_id, language)
+                        VALUES (%s, %s)
+                        """,
+                        (user_id, language),
+                    )
+            except Exception as e:
+                logger.error(f"Error saving user_settings to MySQL: {e}")
+
+
+async def save_config_to_db():
+    """Mirror in-memory config_data dict to MySQL config table."""
+    pool = await get_db_pool()
+    if pool is None:
+        return
+
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            try:
+                await cur.execute("DELETE FROM config")
+                for key, value in config_data.items():
+                    await cur.execute(
+                        """
+                        REPLACE INTO config (config_key, config_value)
+                        VALUES (%s, %s)
+                        """,
+                        (key, json.dumps(value)),
+                    )
+            except Exception as e:
+                logger.error(f"Error saving config to MySQL: {e}")
+
+
+async def save_user_to_db(user_id, user_data):
+    """Insert/update a single user row in all_users + user_settings tables."""
+    pool = await get_db_pool()
+    if pool is None:
+        return
+
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            try:
+                first_name = user_data.get("first_name")
+                last_name = user_data.get("last_name")
+                username = user_data.get("username")
+                last_interaction = user_data.get("last_interaction")
+                numbers_checked = user_data.get("numbers_checked", 0)
+
+                await cur.execute(
+                    """
+                    REPLACE INTO all_users (user_id, first_name, last_name, username, last_interaction, numbers_checked)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    """,
+                    (int(user_id), first_name, last_name, username, last_interaction, numbers_checked),
+                )
+
+                # also update user_settings language if present
+                language = user_data.get("language")
+                if language:
+                    await cur.execute(
+                        """
+                        REPLACE INTO user_settings (user_id, language)
+                        VALUES (%s, %s)
+                        """,
+                        (int(user_id), language),
+                    )
+            except Exception as e:
+                logger.error(f"Error saving single user {user_id} to MySQL: {e}")
 
 # --- LANGUAGE FUNCTIONS ---
 
@@ -2694,7 +2976,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
         pass
 
 async def load_all_data():
-    """Load all data files concurrently on startup."""
+    """Load all data files concurrently on startup and initialise MySQL (if configured)."""
     await asyncio.gather(
         load_config_from_file(),
         load_users_from_file(),
@@ -2702,6 +2984,13 @@ async def load_all_data():
         load_all_users_from_file(),
         load_price_list_from_file(),
         load_user_settings_from_file()
+    )
+
+    # Initialise MySQL schema (if connection works)
+    try:
+        await init_db()
+    except Exception as e:
+        logger.error(f"Error initialising MySQL database: {e}")
     )
 
 def main():
