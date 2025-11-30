@@ -2815,7 +2815,6 @@ async def broadcast_approved(update: Update, context: ContextTypes.DEFAULT_TYPE)
             fail_count=fail_count
         )
     )
-    )
 
 
 # Function to remove HTML tags from text
