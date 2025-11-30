@@ -12,6 +12,9 @@ import string
 import sys
 import subprocess
 import zipfile
+import imaplib
+import email
+from email.header import decode_header, make_header
 from datetime import datetime, timedelta, timezone
 
 # --- THIRD-PARTY DEPENDENCIES (AUTO-INSTALL IF MISSING) ---
@@ -106,6 +109,15 @@ MYSQL_PORT = 3306
 MYSQL_USER = "refihzbz_fbchek"
 MYSQL_PASSWORD = "Asraf1025@#"
 MYSQL_DB = "refihzbz_fbchek"
+
+# --- GMAIL PAYMENT CHECK CONFIGURATION ---
+# Set these via environment variables for security if possible.
+# The bot will automatically poll this Gmail inbox for payment emails.
+GMAIL_IMAP_HOST = "imap.gmail.com"
+GMAIL_IMAP_PORT = 993
+GMAIL_USERNAME = os.getenv("GMAIL_USERNAME", "")
+GMAIL_PASSWORD = os.getenv("GMAIL_PASSWORD",_code "new"</)
+"
 
 # --- PREMIUM ADMIN & APPROVAL SYSTEM ---
 
@@ -1269,6 +1281,257 @@ async def auto_cleanup_task(context: ContextTypes.DEFAULT_TYPE) -> None:
         except Exception as e:
             logger.error("Error in auto cleanup task: %s", e)
         await asyncio.sleep(AUTO_CLEANUP_INTERVAL)
+
+
+def fetch_gmail_payments_sync() -> list[dict]:
+    """
+    Blocking helper to fetch payment events from Gmail via IMAP.
+
+    Expected format somewhere in the subject or body:
+      TGID: &lt;telegram_user_id&gt;
+      PLAN: &lt;amount&gt; &lt;unit&gt;
+
+    Example:
+      TGID: 123456789
+      PLAN: 7 days
+    """
+    events: list[dict] = []
+
+    if not GMAIL_USERNAME or not GMAIL_PASSWORD:
+        return events
+
+    try:
+        mail = imaplib.IMAP4_SSL(GMAIL_IMAP_HOST, GMAIL_IMAP_PORT)
+        mail.login(GMAIL_USERNAME, GMAIL_PASSWORD)
+        mail.select("INBOX")
+
+        typ, data = mail.search(None, "UNSEEN")
+        if typ != "OK":
+            logger.error("Gmail IMAP search failed: %s", typ)
+            mail.close()
+            mail.logout()
+            return events
+
+        for num in data[0].split():
+            typ, msg_data = mail.fetch(num, "(RFC822)")
+            if typ != "OK" or not msg_data:
+                continue
+
+            raw_email = msg_data[0][1]
+            msg = email.message_from_bytes(raw_email)
+
+            raw_subject = msg.get("Subject", "")
+            try:
+                subject = str(make_header(decode_header(raw_subject)))
+            except Exception:
+                subject = raw_subject
+
+            body = ""
+            if msg.is_multipart():
+                for part in msg.walk():
+                    ctype = part.get_content_type()
+                    cdispo = str(part.get("Content-Disposition", ""))
+                    if ctype == "text/plain" and "attachment" not in cdispo:
+                        charset = part.get_content_charset() or "utf-8"
+                        try:
+                            body = part.get_payload(decode=True).decode(
+                                charset, errors="ignore"
+                            )
+                        except Exception:
+                            body = part.get_payload(decode=True).decode(
+                                "utf-8", errors="ignore"
+                            )
+                        break
+            else:
+                charset = msg.get_content_charset() or "utf-8"
+                try:
+                    body = msg.get_payload(decode=True).decode(
+                        charset, errors="ignore"
+                    )
+                except Exception:
+                    body = msg.get_payload(decode=True).decode(
+                        "utf-8", errors="ignore"
+                    )
+
+            text = subject + "\n" + body
+
+            tgid_match = re.search(r"TGID[:=]\s*(\d+)", text, re.IGNORECASE)
+            plan_match = re.search(
+                r"PLAN[:=]\s*(\d+)\s*(hour|hours|day|days|month|months)",
+                text,
+                re.IGNORECASE,
+            )
+
+            if tgid_match and plan_match:
+                user_id = int(tgid_match.group(1))
+                amount = int(plan_match.group(1))
+                unit = plan_match.group(2)
+                events.append(
+                    {
+                        "user_id": user_id,
+                        "amount": amount,
+                        "unit": unit,
+                        "subject": subject,
+                    }
+                )
+                # Mark processed so we do not handle again
+                try:
+                    mail.store(num, "+FLAGS", "\\Seen")
+                except Exception:
+                    pass
+            else:
+                # Mark as seen so we do not repeatedly parse irrelevant emails
+                try:
+                    mail.store(num, "+FLAGS", "\\Seen")
+                except Exception:
+                    pass
+
+        mail.close()
+        mail.logout()
+    except Exception as e:
+        logger.error("Error while checking Gmail for payments: %s", e)
+
+    return events
+
+
+async def process_auto_payment(
+    context: ContextTypes.DEFAULT_TYPE,
+    user_id_to_approve: int,
+    amount: int,
+    unit: str,
+    subject: str,
+) -> None:
+    """
+    Apply a paid plan to a user based on Gmail-detected payment.
+    Behaves similarly to /approve but without needing an Update.
+    """
+    try:
+        now = datetime.now(timezone.utc)
+        base_time = now
+        current_expiry = approved_users.get(user_id_to_approve)
+        if current_expiry is not None and current_expiry > now:
+            base_time = current_expiry
+
+        unit_l = unit.lower()
+
+        if unit_l.startswith("hour"):
+            expiry_date = base_time + timedelta(hours=amount)
+        elif unit_l.startswith("day"):
+            expiry_date = base_time + timedelta(days=amount)
+        elif unit_l.startswith("month"):
+            expiry_date = base_time + timedelta(days=amount * 30)
+        else:
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=(
+                    f"⚠️ Gmail payment detected for user {user_id_to_approve}, "
+                    f"but unit '{unit}' is not recognized. Subject: {subject}"
+                ),
+            )
+            return
+
+        # Derive and store plan info (duration and price, if from price_list)
+        plan_duration = f"{amount} {unit_l}"
+        plan_price_bdt = None
+        plan_price_usd = None
+
+        if unit_l.startswith("day"):
+            for value in price_list.values():
+                try:
+                    num_str, unit_str = value["duration"].split()[:2]
+                    num_days = int(num_str)
+                except Exception:
+                    continue
+                if num_days == amount and unit_str.lower().startswith("day"):
+                    plan_duration = value["duration"]
+                    plan_price_bdt = value.get("price_bdt")
+                    plan_price_usd = value.get("price_usd")
+                    break
+
+        user_id_str = str(user_id_to_approve)
+        user_rec = all_users.setdefault(user_id_str, {})
+        user_rec.setdefault("first_name", "")
+        user_rec.setdefault("last_name", "")
+        user_rec.setdefault("username", "")
+        user_rec["last_interaction"] = datetime.now().isoformat()
+        user_rec["plan_duration"] = plan_duration
+        if plan_price_bdt is not None:
+            user_rec["plan_price_bdt"] = plan_price_bdt
+        if plan_price_usd is not None:
+            user_rec["plan_price_usd"] = plan_price_usd
+
+        approved_users[user_id_to_approve] = expiry_date
+
+        await save_all_users_to_file()
+        await save_users_to_file()
+
+        expiry_str = expiry_date.strftime("%Y-%m-%d %H:%M:%S UTC")
+
+        # Notify admin
+        try:
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=(
+                    f"✅ Auto-approved user {user_id_to_approve} from Gmail payment.\n"
+                    f"Subject: {subject}\n"
+                    f"Plan: {plan_duration}\n"
+                    f"Expires: {expiry_str}"
+                ),
+            )
+        except Exception as e:
+            logger.error(
+                "Failed to notify admin about Gmail auto-approval for %s: %s",
+                user_id_to_approve,
+                e,
+            )
+
+        # Notify user (if possible)
+        try:
+            await send_user_notification(
+                context,
+                user_id_to_approve,
+                get_text(
+                    user_id_to_approve,
+                    "access_approved",
+                    expiry_date=expiry_str,
+                ),
+            )
+        except Exception as e:
+            logger.error(
+                "Failed to notify user %s after Gmail auto-approval: %s",
+                user_id_to_approve,
+                e,
+            )
+    except Exception as e:
+        logger.error(
+            "Error while auto-approving user %s from Gmail payment: %s",
+            user_id_to_approve,
+            e,
+        )
+
+
+async def check_gmail_for_payments(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Periodic job: check Gmail inbox for payment emails and auto-approve users.
+    """
+    events = await asyncio.get_running_loop().run_in_executor(
+        None, fetch_gmail_payments_sync
+    )
+    if not events:
+        return
+
+    for event in events:
+        await process_auto_payment(
+            context,
+            event["user_id"],
+            event["amount"],
+            event["unit"],
+            event["subject"],
+        )
+
+
+async def gmail_payment_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    await check_gmail_for_payments(context)
 
 
 async def export_bot_data() -> io.BytesIO | None:

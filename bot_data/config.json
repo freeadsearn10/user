@@ -1,3 +1,4 @@
 {
-  "rate_limit_seconds": 300
+  "rate_limit_seconds": 300,
+  "last_reset_date": "2025-11-30"
 }
