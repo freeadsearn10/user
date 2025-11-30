@@ -31,21 +31,9 @@ except ImportError:
     from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters, CallbackQueryHandler
     from telegram.error import BadRequest
 
-# --- NEW IMPORTS FOR ASYNC OPERATIONS ---
-try:
-    import aiofiles  # For async file I/O
-except ImportError:
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "aiofiles"])
-    import aiofiles
-
-try:
-    import httpx  # For async HTTP requests
-except ImportError:
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "httpx"])
-    import httpx
-
-try:
-    import aiomysql  # For async MySQL database access
+# --- NEW IMPORTS FOR ASYNC OPERATIONS ---tryt:    importp aiofiles  # For async file I/Oexceptx ImportError:   : subprocess.check_call([sys.executable, "-m", "pip", "install", "aiofiles"])   ] import aiofiles
+try:    import httpix  # For async HTTP requestsexcepte ImportError:   r subprocess.check_call([sys.executable, "-m", "pip", "install", "httpx"])   " import httpx
+# Ensure cryptography is    import aiomysql  # For async MySQL database access
 except ImportError:
     subprocess.check_call([sys.executable, "-m", "pip", "install", "aiomysql"])
     import aiomysql
