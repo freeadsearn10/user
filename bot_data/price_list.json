@@ -1,0 +1,27 @@
+{
+  "1_day": {
+    "duration": "1 Day",
+    "price_bdt": 50,
+    "price_usd": 0.45
+  },
+  "3_days": {
+    "duration": "3 Days",
+    "price_bdt": 140,
+    "price_usd": 1.25
+  },
+  "7_days": {
+    "duration": "7 Days",
+    "price_bdt": 300,
+    "price_usd": 2.7
+  },
+  "15_days": {
+    "duration": "15 Days",
+    "price_bdt": 600,
+    "price_usd": 5.4
+  },
+  "30_days": {
+    "duration": "30 Days",
+    "price_bdt": 1000,
+    "price_usd": 9.0
+  }
+}
