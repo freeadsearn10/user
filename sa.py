@@ -183,11 +183,11 @@ LANGUAGES = {
         "payment_binance": "Binance Pay",
         "select_plan_binance": "Select a plan to pay via Binance Pay:",
         "binance_invoice": (
-            "🧾 <b>Binance Pay Invoice</b>\\n\\n"
+            "🧾 <b>Binance Pay Invoice</b>\\n"
             "📦 Plan: <b>{duration}</b>\\n"
-            "💰 Amount: <b>{price_bdt} BDT</b> (≈ {price_usd} USD)\\n\\n"
+            "💰 Amount: <b>{price_bdt} BDT</b> (≈ {price_usd} USD)\\n"
             "➡️ Pay exactly <b>{price_usd} USD</b> via Binance Pay to this Pay ID:\\n"
-            "<code>{pay_id}</code>\\n\\n"
+            "<code>{pay_id}</code>\\n"
             "✅ After paying, tap <b>Verify Payment</b> below.\\n"
             "If there is any issue, contact @{admin_username}."
         ),
@@ -370,11 +370,11 @@ LANGUAGES = {
         "payment_binance": "Binance Pay",
         "select_plan_binance": "Binance Pay দিয়ে পেমেন্ট করতে একটি প্ল্যান নির্বাচন করুন:",
         "binance_invoice": (
-            "🧾 <b>Binance Pay ইনভয়েস</b>\\n\\n"
+            "🧾 <b>Binance Pay ইনভয়েস</b>\\n"
             "📦 প্ল্যান: <b>{duration}</b>\\n"
-            "💰 পরিমাণ: <b>{price_bdt} BDT</b> (≈ {price_usd} USD)\\n\\n"
+            "💰 পরিমাণ: <b>{price_bdt} BDT</b> (≈ {price_usd} USD)\\n"
             "➡️ Binance Pay দিয়ে ঠিক <b>{price_usd} USD</b> এই Pay ID তে পাঠান:\\n"
-            "<code>{pay_id}</code>\\n\\n"
+            "<code>{pay_id}</code>\\n"
             "✅ পেমেন্ট করার পর নিচের <b>Verify Payment</b> বাটনে চাপ দিন।\\n"
             "সমস্যা হলে @{admin_username} এর সাথে যোগাযোগ করুন।"
         ),
