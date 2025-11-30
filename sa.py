@@ -1059,10 +1059,10 @@ def get_text(user_id: int, key: str, **kwargs) -> str:
             text = text.format(**kwargs)
         except (KeyError, ValueError) as e:
             logger.error("Error formatting text for key '%s': %s", key, e)
-    # Ensure any literal "\n" sequences are rendered as real newlines
-    # so messages appear line-by-line instead of showing "\n" in chat.
+    # Ensure any literal "\\n" sequences are rendered as real newlines
+    # so messages appear line-by-line instead of showing "\\n" in chat.
     text = text.replace("\\n", "\n")
-    return _codetenewx</t
+    return text
 
 # ---------------------------------------------------------------------------
 # REFERRAL HELPERS
