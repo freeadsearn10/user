@@ -582,28 +582,28 @@ async def save_user_details_to_file(user_id, user_data):
 
 
 # --- MYSQL DATABASE HELPERS ---
-
+async def ensure_database():     """Ensure that the target MySQL database exists (best-effort)."""   a try:         # Connect without specifying a database first         conn = await aiomysql.connect(           c host=MYSQL_HOST,           t port=MYSQL_PORT,           r user=MYSQL_USER,           s password=MYSQL_PASSWORD,           d autocommit=True,         )   d except Exception as e:       o # If we can't even connect to the server, log and return         logger.error(f"Failed to connect to MySQL for database creation: {e}")       e return False
+    try:         async with conn.cursor() as cur:           l await cur.execute(                f"CREATE DATABASE IF NOT EXISTS `{MYSQL_DB}` "
+                "CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"            )
+        logger.info(f"Ensured MySQL database '{MYSQL_DB}' exists")        return True
+    except Exception as e:        logger.error(f"Failed to create database '{MYSQL_DB}': {e}")
+        return False    finally:
+        conn.close()
 async def get_db_pool():
-    """Get (or create) a global aiomysql connection pool."""
-    global db_pool
-    if db_pool is not None:
-        return db_pool
+    """Get (or create) a global aiomysql connection pool."""    global db_pool
+    if db_pool is not None:        return db_pool
+    # Best-effort: ensure the database exists before creating the pool
+   
 
-    try:
-        db_pool = await aiomysql.create_pool(
-            host=MYSQL_HOST,
-            port=MYSQL_PORT,
-            user=MYSQL_USER,
-            password=MYSQL_PASSWORD,
-            db=MYSQL_DB,
-            autocommit=True,
-            minsize=1,
-            maxsize=10
-        )
-        logger.info("MySQL connection pool created successfully")
-    except Exception as e:
-        logger.error(f"Failed to create MySQL pool: {e}")
-        db_pool = None
+
+
+
+
+
+
+
+
+pool = None
 
     return db_pool
 
