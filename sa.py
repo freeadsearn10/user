@@ -151,7 +151,7 @@ LANGUAGES = {
             "Please contact the admin to get access.\n"
             "Use /admin to get support contact."
         ),
-        "buy_online": "Buy Online (Coming Soon)",
+        "buy_online": "Buy Online",
         "refer_earn": "Refer & Earn Free Access",
         "buy_online_msg": (
             "🛒 Buy Online\n\n"
@@ -159,14 +159,20 @@ LANGUAGES = {
             "For now, please contact the admin directly to purchase access.\n"
             "Use /admin to get contact details."
         ),
-        "refer_link": (
-            "🔗 Your Referral Link\n\n"
-            "Share this link with your friends:\n{referral_link}\n\n"
-            "Referrals: {referral_count}/3\n"
+        "select_payment_method": "💳 Select a payment method:",
+        "payment_binance": "Binance Pay",
+        "select_plan_binance": "Select a plan to pay via Binance Pay:",
+        "binance_invoice": (
+            "Binance Pay Invoice\\n\\n"
+            "Plan: {duration}\\n"
+            "Amount: {price_bdt} BDT (≈ {price_usd} USD)\\n\\n"
+            "Pay exactly {price_usd} USD via Binance Pay to this Pay ID:\\n"
+            "{pay_id}\\n\\n"
+            "After payment, send screenshot or transaction ID to the admin "
+            "(@{admin_username}) and wait for approval."
         ),
-        "refer_earned": "✅ You've earned 2 hours of free access!\n",
-        "refer_needed": (
-            "❌ You need {remaining} more referral(s) to get 2 hours of free access.\n"
+        "refer_needed_code":new </(
+           "❌ You need {remaining} more referral(s) to get 2 hours of free access.\n"
         ),
         "referral_status": (
             "🔗 Your Referral Status\n\n"
@@ -317,13 +323,25 @@ LANGUAGES = {
             "অ্যাক্সেস পেতে অনুগ্রহ করে অ্যাডমিনের সাথে যোগাযোগ করুন।\n"
             "সাপোর্টের যোগাযোগের জন্য /admin ব্যবহার করুন।"
         ),
-        "buy_online": "অনলাইনে কিনুন (শীঘ্রই আসছে)",
+        "buy_online": "অনলাইনে কিনুন",
         "refer_earn": "রেফার করুন এবং ফ্রি অ্যাক্সেস অর্জন করুন",
         "buy_online_msg": (
             "🛒 অনলাইনে কিনুন\n\n"
             "অনলাইন পেমেন্ট অপশন শীঘ্রই আসছে!\n\n"
             "এখন, অ্যাক্সেস কেনার জন্য সরাসরি অ্যাডমিনের সাথে যোগাযোগ করুন।\n"
             "যোগাযোগের বিবরণের জন্য /admin ব্যবহার করুন।"
+        ),
+        "select_payment_method": "💳 পেমেন্ট পদ্ধতি নির্বাচন করুন:",
+        "payment_binance": "Binance Pay",
+        "select_plan_binance": "Binance Pay দিয়ে পেমেন্ট করতে একটি প্ল্যান নির্বাচন করুন:",
+        "binance_invoice": (
+            "🧾 <b>Binance Pay ইনভয়েস</b>\n\n"
+            "প্ল্যান: <b>{duration}</b>\n"
+            "পরিমাণ: <b>{price_bdt} BDT</b> (≈ {price_usd} USD)\n\n"
+            "Binance Pay এর মাধ্যমে ঠিক <b>{price_usd} USD</b> এই Pay ID তে পাঠান:\n"
+            "<code>{pay_id}</code>\n\n"
+            "পেমেন্ট সম্পন্ন করার পর অ্যাডমিনকে (@{admin_username}) স্ক্রিনশট বা "
+            "ট্রানজ্যাকশন আইডি পাঠান এবং অনুমোদনের জন্য অপেক্ষা করুন।"
         ),
         "refer_link": (
             "🔗 আপনার রেফারেল লিঙ্ক\n\n"
@@ -1590,8 +1608,108 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     # Normal user buttons
     if query.data == "buy_online":
+        # Show online payment methods (currently only Binance Pay)
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    get_text(query.from_user.id, "payment_binance"),
+                    callback_data="pay_binance",
+                )
+            ],
+            [InlineKeyboardButton("🔙 Back", callback_data="back_to_price")],
+        ]
         await query.edit_message_text(
-            get_text(query.from_user.id, "buy_online_msg"), parse_mode="HTML"
+            get_text(query.from_user.id, "select_payment_method"),
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        return
+
+    if query.data == "back_to_price":
+        # Re-render the price list message
+        user = query.from_user
+        text = get_text(user.id, "price_list")
+        for _, value in price_list.items():
+            text += (
+                f"🔹 <b>{value['duration']}</b>: "
+                f"{value['price_bdt']} BDT / {value['price_usd']} USD\n"
+            )
+        text += get_text(user.id, "payment_methods")
+
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    get_text(user.id, "buy_online"), callback_data="buy_online"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    get_text(user.id, "refer_earn"), callback_data="refer"
+                )
+            ],
+        ]
+        await query.edit_message_text(
+            text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
+
+    if query.data == "pay_binance":
+        # Let user pick a plan for Binance Pay
+        user_id = query.from_user.id
+        text = get_text(user_id, "select_plan_binance")
+
+        keyboard: list[list[InlineKeyboardButton]] = []
+        for key, value in price_list.items():
+            label = f"{value['duration']} - {value['price_usd']} USD"
+            keyboard.append(
+                [
+                    InlineKeyboardButton(
+                        label, callback_data=f"pay_binance_plan_{key}"
+                    )
+                ]
+            )
+
+        keyboard.append(
+            [InlineKeyboardButton("🔙 Back", callback_data="buy_online")]
+        )
+
+        await query.edit_message_text(
+            text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
+
+    if query.data.startswith("pay_binance_plan_"):
+        # Show simple invoice with Binance Pay ID
+        plan_key = query.data.replace("pay_binance_plan_", "", 1)
+        plan = price_list.get(plan_key)
+        if not plan:
+            await query.edit_message_text("Selected plan not found.")
+            return
+
+        user_id = query.from_user.id
+        admin_username_clean = ADMIN_USERNAME.lstrip("@")
+        text = get_text(
+            user_id,
+            "binance_invoice",
+            duration=plan["duration"],
+            price_bdt=plan["price_bdt"],
+            price_usd=plan["price_usd"],
+            pay_id="909906294",
+            admin_username=admin_username_clean,
+        )
+
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "💬 Contact Admin",
+                    url=f"https://t.me/{admin_username_clean}",
+                )
+            ],
+            [InlineKeyboardButton("🔙 Back", callback_data="pay_binance")],
+        ]
+
+        await query.edit_message_text(
+            text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard)
         )
         return
 
