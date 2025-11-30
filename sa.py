@@ -220,18 +220,18 @@ LANGUAGES = {
         "current_price_list": "💰 Current Price List\n\n",
         "unauthorized": "❌ You are not authorized to use this command.",
         "usage_approve": (
-            "Usage: /approve <user_id> <amount> <unit>\n"
+            "Usage: /approve &lt;user_id&gt; &lt;amount&gt; &lt;unit&gt;\n"
             "Example: /approve 123456789 7 days"
         ),
         "usage_disapprove": (
-            "Usage: /disapprove <user_id>\nExample: /disapprove 123456789"
+            "Usage: /disapprove &lt;user_id&gt;\nExample: /disapprove 123456789"
         ),
         "usage_setratelimit": (
-            "Usage: /setratelimit <seconds>\n"
+            "Usage: /setratelimit &lt;seconds&gt;\n"
             "Example: /setratelimit 600 (for 10 minutes)"
         ),
-        "usage_broadcast": "Usage: /broadcast <your message>",
-        "usage_broadcast_approved": "Usage: /broadcast_approved <your message>",
+        "usage_broadcast": "Usage: /broadcast &lt;your message&gt;",
+        "usage_broadcast_approved": "Usage: /broadcast_approved &lt;your message&gt;",
         "invalid_unit": "❌ Invalid unit. Use 'hours', 'days', or 'months'.",
         "invalid_input": "❌ Invalid input. Please use the correct format: {format}",
         "cannot_disapprove_admin": "❌ You cannot disapprove the main admin.",
@@ -385,18 +385,18 @@ LANGUAGES = {
         "current_price_list": "💰 বর্তমান মূল্য তালিকা\n\n",
         "unauthorized": "❌ আপনি এই কমান্ড ব্যবহার করার অনুমতি পাননি।",
         "usage_approve": (
-            "ব্যবহার: /approve <user_id> <amount> <unit>\n"
+            "ব্যবহার: /approve &lt;user_id&gt; &lt;amount&gt; &lt;unit&gt;\n"
             "উদাহরণ: /approve 123456789 7 days"
         ),
         "usage_disapprove": (
-            "ব্যবহার: /disapprove <user_id>\nউদাহরণ: /disapprove 123456789"
+            "ব্যবহার: /disapprove &lt;user_id&gt;\nউদাহরণ: /disapprove 123456789"
         ),
         "usage_setratelimit": (
-            "ব্যবহার: /setratelimit <seconds>\nউদাহরণ: /setratelimit 600 (10 মিনিটের জন্য)"
+            "ব্যবহার: /setratelimit &lt;seconds&gt;\nউদাহরণ: /setratelimit 600 (10 মিনিটের জন্য)"
         ),
-        "usage_broadcast": "ব্যবহার: /broadcast <আপনার বার্তা>",
+        "usage_broadcast": "ব্যবহার: /broadcast &lt;আপনার বার্তা&gt;",
         "usage_broadcast_approved": (
-            "ব্যবহার: /broadcast_approved <আপনার বার্তা>"
+            "ব্যবহার: /broadcast_approved &lt;আপনার বার্তা&gt;"
         ),
         "invalid_unit": "❌ অবৈধ ইউনিট। 'hours', 'days', বা 'months' ব্যবহার করুন।",
         "invalid_input": (
