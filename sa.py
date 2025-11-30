@@ -2488,11 +2488,26 @@ async def approve(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def disapprove(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin command to disapprove a user."""
     if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text(get_text(update.effective_user.id, "unauthorized"))
+        if update.message:
+            await update.message.reply_text(get_text(update.effective_user.id, "unauthorized"))
+        else:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=get_text(update.effective_user.id, "unauthorized")
+            )
         return
 
+    # If no arguments are provided, show proper usage instead of failing
     if not context.args:
-        await update.message.reply_html(get_text(update.effective_user.id, "usage_disapprove"))
+        usage_text = get_text(update.effective_user.id, "usage_disapprove")
+        if update.message:
+            await update.message.reply_html(usage_text)
+        else:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=usage_text,
+                parse_mode="HTML"
+            )
         return
 
     try:
@@ -2532,7 +2547,13 @@ async def disapprove(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
     except (ValueError, IndexError):
-        await update.message.reply_html(get_text(update.effective_user.id, "invalid_user_id"))
+        await update.message.reply_html(
+            get_text(
+                update.effective_user.id,
+                "invalid_input",
+                format=get_text(update.effective_user.id, "usage_disapprove")
+            )
+        )
 
 async def set_rate_limit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin command to change the rate limit."""
