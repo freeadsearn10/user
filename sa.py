@@ -27,27 +27,30 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# --- CONFIGURATION ---TELEEGRAM_BOT_TOKEN = '8499529767:AAHd3L5QTaJpcgqqadadYCKv6FXTMADuniCVM'
+# --- CONFIGURATION ---
+TELEGRAM_BOT_TOKEN = '8499529767:AAHd3L5QTaJpcgqqadYCKv6FXTMADuniCVM'
 MAX_WORKERS = 100  # This is no longer used for HTTP, but kept for reference
 FILE_SEND_THRESHOLD = 120  # This is no longer used in the logic, but kept for reference
 AUTO_CLEANUP_INTERVAL = 100  # Auto cleanup every hour (in seconds)
 USERS_PER_PAGE = 10  # Number of users to show per page in pagination
 DEFAULT_RATE_LIMIT_SECONDS = 300  # Default 5 minutes rate limit (300 seconds)
 
-# --- LOCAL FILE CONFIGURATION ---#  Create a directory to store data files if it doesn't existDATAA_DIR = "bot_data"if  not os.path.exists(DATA_DIR):     os.makedirs(DATA_DIR)
-# --- MYSQL DATABASE CONFIGURATION ---#- Production MySQL configuration (shared hosting)MYSQLS_HOST = "localhost"  # Change if your hosting provider gives a different hostMYSQLS_PORT = 3306MYSQLS_USER = "refihzbz_fbchek"MYSQLS_PASSWORD = "Asraf1025@#"MYSQLS_DB = "refihzbz_fbchek"
-# Global connection pooldbp_pool = _code
- _code
-tenv("MYSQL_DB", "telegram_bot")
-# Global connection pooldbe_pool = _code
-pool = N_codeonnewe</
+# --- LOCAL FILE CONFIGURATION ---
+# Create a directory to store data files if it doesn't exist
+DATA_DIR = "bot_data"
+if not os.path.exists(DATA_DIR):
+    os.makedirs(DATA_DIR)
 
+# --- MYSQL DATABASE CONFIGURATION ---
+# Production MySQL configuration (shared hosting)
+MYSQL_HOST = "localhost"  # Change if your hosting provider gives a different host
+MYSQL_PORT = 3306
+MYSQL_USER = "refihzbz_fbchek"
+MYSQL_PASSWORD = "Asraf1025@#"
+MYSQL_DB = "refihzbz_fbchek"
 
-
-
-
-
-DIR)
+# Global connection pool
+db_pool = None
 
 USER_DATA_FILE = os.path.join(DATA_DIR, "approved_users.json")
 REFERRAL_DATA_FILE = os.path.join(DATA_DIR, "referral_data.json")
@@ -2996,9 +2999,22 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     except Exception:
         pass
 
-async def load_all_data():     """Load all data files concurrently on startup and initialise MySQL (if configured)."""    awaitw asyncio.gather(         load_config_from_file(),         load_users_from_file(),         load_referral_data_from_file(),        load _all_users_from_file(),        load _price_list_from_file(),        load _user_settings_from_file()   l )
-    # Initialise MySQL schema (if connection works)   t try:         await init_db()   t except Exception as eException as e:         logger.error(f"Error initialising MySQL database: {_code
-}")
+async def load_all_data():
+    """Load all data files concurrently on startup and initialise MySQL (if configured)."""
+    await asyncio.gather(
+        load_config_from_file(),
+        load_users_from_file(),
+        load_referral_data_from_file(),
+        load_all_users_from_file(),
+        load_price_list_from_file(),
+        load_user_settings_from_file()
+    )
+
+    # Initialise MySQL schema (if connection works)
+    try:
+        await init_db()
+    except Exception as e:
+        logger.error(f"Error initialising MySQL database: {e}")
     )
 
 def main():
