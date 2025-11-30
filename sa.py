@@ -162,25 +162,34 @@ LANGUAGES = {
         "select_payment_method": "💳 Select a payment method:",
         "payment_binance": "Binance Pay",
         "select_plan_binance": "Select a plan to pay via Binance Pay:",
+        "binance_invoice_coded": "💳 Select a payment method:",
+        "payment_binance": "Binance Pay",
+        "select_plan_binance": "Select a plan to pay via Binance Pay:",
         "binance_invoice": (
             "Binance Pay Invoice\\n\\n"
             "Plan: {duration}\\n"
-            "Amount: {price_bdt} BDT (≈ {price_usd} USD)\\n\\n"
+            "Amount: {price_bdt} BDT (approx. {price_usd} USD)\\n\\n"
             "Pay exactly {price_usd} USD via Binance Pay to this Pay ID:\\n"
             "{pay_id}\\n\\n"
             "After payment, send screenshot or transaction ID to the admin "
             "(@{admin_username}) and wait for approval."
         ),
-        "refer_needed_code":new </(
-           "❌ You need {remaining} more referral(s) to get 2 hours of free access.\n"
+        "refer_link": (
+            "🔗 Your Referral Link\\n\\n"
+            "Share this link with your friends:\\n{referral_link}\\n\\n"
+            "Referrals: {referral_count}/3\\n"
+        ),
+        "refer_earned": "✅ You've earned 2 hours of free access!\\n",
+        "refer_needed": (
+            "❌ You need {remaining} more referral(s) to get 2 hours of free access.\\n"
         ),
         "referral_status": (
-            "🔗 Your Referral Status\n\n"
-            "Your referral code: {referral_code}\n"
-            "Your referral link:\n{referral_link}\n\n"
-            "Referrals: {referral_count}/3\n"
+            "🔗 Your Referral Status\\n\\n"
+            "Your referral code: {referral_code}\\n"
+            "Your referral link:\\n{referral_link}\\n\\n"
+            "Referrals: {referral_count}/3\\n"
         ),
-        "access_until": "✅ You have access until: {expiry_date}\n",
+        "access_until": "✅ You have access until: {expiry_date}\\n",
         "permanent_access": "✅ You have permanent access.\n",
         "processing": "🚀 Processing your numbers... Please wait.",
         "no_numbers": (
