@@ -189,8 +189,7 @@ LANGUAGES = {
             "➡️ Pay exactly <b>{price_usd} USD</b> via Binance Pay to this Pay ID:\\n"
             "<code>{pay_id}</code>\\n\\n"
             "✅ After paying, tap <b>Verify Payment</b> below.\\n"
-            "If there is any issue, contact @{admin_username}.\\n\\n"
-            "📧 Admin email: songall558@gmail.com"
+            "If there is any issue, contact @{admin_username}."
         ),
         "refer_link": (
             "🔗 <b>Your Referral Link</b>\\n\\n"
@@ -234,7 +233,7 @@ LANGUAGES = {
         "price_list": "💰 Price List\n\n",
         "payment_methods": (
             "\n💳 Payment Methods:\n"
-            "• Bkash\n• Nagad\n• Rocket\n• PayPal\n• Crypto\n\n"
+            "• Bkash\n• Nagad\n• Binance Pay\n\n"
             "📩 To purchase, please contact the admin.\n"
             "Use /admin to get contact details."
         ),
@@ -324,11 +323,20 @@ LANGUAGES = {
             "⚠️ User {uid} is already approved until {expiry_date}."
         ),
         "export_data_msg": (
-            "📦 Export Data\n\n"
-            "Your bot data is being prepared for download.\n\n"
+            "📦 Export Data\\n\\n"
+            "Your bot data is being prepared for download.\\n\\n"
             "This may take a moment if you have many users."
         ),
         "export_complete": "✅ Export complete. The data has been sent as a zip file.",
+        "no_history": "You have no plan history yet.",
+        "history_header": "📜 Your Plan History\\n\\n",
+        "welcome_after_language": (
+            "👋 Welcome to the Facebook Number Checker Bot!\\n\\n"
+            "🆔 Your User ID: &lt;code&gt;{uid}&lt;/code&gt;\\n\\n"
+            "This bot lets you check Facebook accounts by phone number.\\n"
+            "Access is premium – you can buy a plan or earn free access with referrals.\\n\\n"
+            "Use the buttons below to see the price list or contact the admin."
+        ),
     },
     "bn": {
         "welcome": (
@@ -368,8 +376,7 @@ LANGUAGES = {
             "➡️ Binance Pay দিয়ে ঠিক <b>{price_usd} USD</b> এই Pay ID তে পাঠান:\\n"
             "<code>{pay_id}</code>\\n\\n"
             "✅ পেমেন্ট করার পর নিচের <b>Verify Payment</b> বাটনে চাপ দিন।\\n"
-            "সমস্যা হলে @{admin_username} এর সাথে যোগাযোগ করুন।\\n\\n"
-            "📧 Admin email: songall558@gmail.com"
+            "সমস্যা হলে @{admin_username} এর সাথে যোগাযোগ করুন।"
         ),
         "refer_link": (
             "🔗 <b>আপনার রেফারেল লিঙ্ক</b>\\n\\n"
@@ -412,9 +419,9 @@ LANGUAGES = {
         "price_list": "💰 মূল্য তালিকা\n\n",
         "payment_methods": (
             "\n💳 পেমেন্ট পদ্ধতি:\n"
-            "• বিকাশ\n• নগদ\n• রকেট\n• পেপাল\n• ক্রিপ্টো\n\n"
-            "📩 কেনার জন্য, অনুগ্রহ করে অ্যাডমিনের সাথে যোগাযোগ করুন।\n"
-            "যোগাযোগের বিবরণের জন্য /admin ব্যবহার করুন।"
+            "• বিকাশ\n• নগদ\n• Binance Pay\n\n"
+            "📩 কিনতে হলে অ্যাডমিনের সাথে যোগাযোগ করুন।\n"
+            "যোগাযোগের জন্য /admin ব্যবহার করুন।"
         ),
         "admin_panel": "👑 অ্যাডমিন প্যানেল\n\nনিচের মেনু থেকে একটি অপশন নির্বাচন করুন:",
         "approved_users": "✅ অনুমোদিত ইউজার",
@@ -508,11 +515,20 @@ LANGUAGES = {
             "⚠️ ইউজার {uid} ইতিমধ্যে {expiry_date} পর্যন্ত অনুমোদিত।"
         ),
         "export_data_msg": (
-            "📦 ডেটা এক্সপোর্ট\n\n"
-            "আপনার বট ডেটা ডাউনলোডের জন্য প্রস্তুত করা হচ্ছে।\n\n"
+            "📦 ডেটা এক্সপোর্ট\\n\\n"
+            "আপনার বট ডেটা ডাউনলোডের জন্য প্রস্তুত করা হচ্ছে।\\n\\n"
             "অনেক ইউজার থাকলে এতে কিছুটা সময় লাগতে পারে।"
         ),
         "export_complete": "✅ এক্সপোর্ট সম্পন্ন। ডেটা একটি জিপ ফাইল হিসেবে পাঠানো হয়েছে।",
+        "no_history": "আপনার কোনো প্ল্যান হিস্ট্রি নেই।",
+        "history_header": "📜 আপনার প্ল্যান হিস্ট্রি\\n\\n",
+        "welcome_after_language": (
+            "👋 ফেসবুক নম্বর চেকার বটে স্বাগতম!\\n\\n"
+            "🆔 আপনার ইউজার ID: &lt;code&gt;{uid}&lt;/code&gt;\\n\\n"
+            "এই বটের মাধ্যমে আপনি মোবাইল নম্বর দিয়ে ফেসবুক অ্যাকাউন্ট চেক করতে পারবেন।\\n"
+            "এটি একটি প্রিমিয়াম সার্ভিস – আপনি প্ল্যান কিনতে পারেন, অথবা রেফারেল দিয়ে ফ্রি অ্যাক্সেস পেতে পারেন।\\n\\n"
+            "নিচের বাটনগুলো ব্যবহার করে প্রাইস লিস্ট দেখুন অথবা অ্যাডমিনের সাথে যোগাযোগ করুন।"
+        ),
     },
 }
 
@@ -1112,6 +1128,27 @@ async def process_referral(
         await save_all_users_to_file()
 
         await save_users_to_file()
+
+        # Append history entry for referral bonus
+        user_history = user_rec.get("history")
+        if not isinstance(user_history, list):
+            user_history = []
+            user_rec["history"] = user_history
+        user_history.append(
+            {
+                "type": "referral",
+                "source": "referral",
+                "plan_duration": "2 hours (referral bonus)",
+                "price_bdt": 0,
+                "price_usd": 0.0,
+                "invoice_id": "referral_bonus",
+                "start_at": datetime.now(timezone.utc).isoformat(),
+                "expiry_at": expiry_date.isoformat(),
+            }
+        )
+
+        await save_all_users_to_file()
+
         await send_user_notification(
             context,
             referrer_id,
@@ -1308,6 +1345,13 @@ async def auto_cleanup_task(context: ContextTypes.DEFAULT_TYPE) -> None:
         except Exception as e:
             logger.error("Error in auto cleanup task: %s", e)
         await asyncio.sleep(AUTO_CLEANUP_INTERVAL)
+
+
+async def cleanup_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """JobQueue task: periodic cleanup of expired users."""
+    removed = await cleanup_expired_users()
+    if removed > 0:
+        logger.info("Auto cleanup job removed %d users", removed)
 
 
 def fetch_latest_binance_payment_for_amount(
@@ -1813,6 +1857,29 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             chat_id=query.message.chat_id,
             text=get_text(query.from_user.id, "example"),
         )
+
+        # After setting language, show a rich welcome with user ID and quick actions
+        welcome_text = get_text(
+            query.from_user.id,
+            "welcome_after_language",
+            uid=query.from_user.id,
+        )
+        admin_username_clean = ADMIN_USERNAME.lstrip("@")
+        keyboard = [
+            [InlineKeyboardButton("💰 Price list", callback_data="back_to_price")],
+            [
+                InlineKeyboardButton(
+                    "📞 Contact admin",
+                    url=f"https://t.me/{admin_username_clean}",
+                )
+            ],
+        ]
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=welcome_text,
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
         return
 
     # Normal user buttons
@@ -2047,6 +2114,24 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         user_rec["plan_duration"] = duration_str or plan.get("duration", "")
         user_rec["plan_price_bdt"] = plan.get("price_bdt")
         user_rec["plan_price_usd"] = plan.get("price_usd")
+
+        # Append paid history entry for this Binance payment
+        history_list = user_rec.get("history")
+        if not isinstance(history_list, list):
+            history_list = []
+            user_rec["history"] = history_list
+        history_list.append(
+            {
+                "type": "paid",
+                "source": "binance",
+                "plan_duration": duration_str or plan.get("duration", ""),
+                "price_bdt": plan.get("price_bdt"),
+                "price_usd": plan.get("price_usd"),
+                "invoice_id": message_id or "N/A",
+                "start_at": base_time.isoformat(),
+                "expiry_at": expiry_date.isoformat(),
+            }
+        )
 
         await save_all_users_to_file()
         await save_users_to_file()
@@ -2510,6 +2595,25 @@ async def approve(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             user_rec["plan_price_bdt"] = plan_price_bdt
         if plan_price_usd is not None:
             user_rec["plan_price_usd"] = plan_price_usd
+
+        # Append manual approval history entry
+        history_list = user_rec.get("history")
+        if not isinstance(history_list, list):
+            history_list = []
+            user_rec["history"] = history_list
+        history_list.append(
+            {
+                "type": "paid",
+                "source": "manual",
+                "plan_duration": plan_duration,
+                "price_bdt": plan_price_bdt,
+                "price_usd": plan_price_usd,
+                "invoice_id": "manual_approve",
+                "start_at": datetime.now(timezone.utc).isoformat(),
+                "expiry_at": expiry_date.isoformat(),
+            }
+        )
+
         await save_all_users_to_file()
 
         approved_users[user_id_to_approve] = expiry_date
@@ -2787,6 +2891,61 @@ async def list_all_users(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             chat_id=update.effective_chat.id,
             document=open(filename, "rb"),
             caption="List of all users who have interacted with the bot.",
+        )
+        os.remove(filename)
+    else:
+        await update.message.reply_html(text)
+
+
+async def history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show current user's plan history (free + paid)."""
+    user = update.effective_user
+    user_id_str = str(user.id)
+    user_rec = all_users.get(user_id_str, {})
+    history_list = user_rec.get("history", [])
+
+    if not history_list:
+        await update.message.reply_html(get_text(user.id, "no_history"))
+        return
+
+    lines: list[str] = [get_text(user.id, "history_header")]
+
+    for idx, h in enumerate(history_list, start=1):
+        h_type = h.get("type", "paid")
+        source = h.get("source", "manual")
+        plan_duration = h.get("plan_duration", "Unknown")
+        price_bdt = h.get("price_bdt")
+        price_usd = h.get("price_usd")
+        invoice_id = h.get("invoice_id", "N/A")
+        start_at = h.get("start_at", "")
+        expiry_at = h.get("expiry_at", "")
+
+        if price_bdt not in (None, 0) and price_usd not in (None, 0.0):
+            price_str = f"{price_bdt} BDT / {price_usd} USD"
+        elif h_type == "referral":
+            price_str = "FREE (referral bonus)"
+        else:
+            price_str = "FREE"
+
+        date_label = start_at[:10] if isinstance(start_at, str) else ""
+        lines.append(
+            f"#{idx} [{date_label}] {plan_duration} – {price_str} "
+            f"({h_type} via {source})\\n"
+            f"   Invoice ID: <code>{invoice_id}</code>\\n"
+            f"   Expires: {expiry_at}\\n"
+        )
+
+    text = "\n".join(lines)
+
+    if len(text) > 4000:
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"history_{user_id_str}_{ts}.txt"
+        async with aiofiles.open(filename, "w", encoding="utf-8") as f:
+            await f.write(text)
+        await context.bot.send_document(
+            chat_id=update.effective_chat.id,
+            document=open(filename, "rb"),
+            caption="Your plan history.",
         )
         os.remove(filename)
     else:
@@ -3141,6 +3300,7 @@ def main() -> None:
     application.add_handler(CommandHandler("referral", referral_status))
     application.add_handler(CommandHandler("price", show_price_list))
     application.add_handler(CommandHandler("lang", change_language))
+    application.add_handler(CommandHandler("history", history))
 
     # Admin commands
     application.add_handler(CommandHandler("approve", approve))
@@ -3162,6 +3322,9 @@ def main() -> None:
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
     )
+
+    # Schedule periodic cleanup of expired users (every 60 seconds)
+    application.job_queue.run_repeating(cleanup_job, interval=60, first=60)
 
     logger.info("Bot is starting...")
     application.run_polling()
