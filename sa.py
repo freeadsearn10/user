@@ -86,7 +86,7 @@ logger = logging.getLogger(__name__)
 
 # --- CONFIGURATION ---
 
-TELEGRAM_BOT_TOKEN = "8499529767:AAHDMLnMOoGI9tTe-Gf3Q3MjpaNxbJKtM1Y"
+TELEGRAM_BOT_TOKEN = "8499529767:AAGh_WYlX178ZAg3Wgquo_BhsoR22gfKKZw"
 
 AUTO_CLEANUP_INTERVAL = 60 * 60  # 1 hour
 DEFAULT_RATE_LIMIT_SECONDS = 300  # 5 minutes
@@ -1059,7 +1059,10 @@ def get_text(user_id: int, key: str, **kwargs) -> str:
             text = text.format(**kwargs)
         except (KeyError, ValueError) as e:
             logger.error("Error formatting text for key '%s': %s", key, e)
-    return text
+    # Ensure any literal "\n" sequences are rendered as real newlines
+    # so messages appear line-by-line instead of showing "\n" in chat.
+    text = text.replace("\\n", "\n")
+    return _codetenewx</t
 
 # ---------------------------------------------------------------------------
 # REFERRAL HELPERS
