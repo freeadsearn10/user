@@ -1,13 +1,9 @@
 import logging
-import requests
 import json
 import concurrent.futures
 import os
 import asyncio
 from datetime import datetime, timedelta, timezone
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters, CallbackQueryHandler
-from telegram.error import BadRequest
 import base64
 import random
 import string
@@ -15,11 +11,44 @@ import html  # Added for HTML escaping
 import re  # Added for removing HTML tags
 import zipfile  # Added for creating zip files
 import io  # Added for in-memory file operations
+import sys
+import subprocess
+
+# --- THIRD-PARTY DEPENDENCIES (AUTO-INSTALL IF MISSING) ---
+try:
+    import requests
+except ImportError:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "requests"])
+    import requests
+
+try:
+    from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+    from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters, CallbackQueryHandler
+    from telegram.error import BadRequest
+except ImportError:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "python-telegram-bot"])
+    from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+    from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters, CallbackQueryHandler
+    from telegram.error import BadRequest
 
 # --- NEW IMPORTS FOR ASYNC OPERATIONS ---
-import aiofiles  # For async file I/O
-import httpx     # For async HTTP requests
-import aiomysql  # For async MySQL database access
+try:
+    import aiofiles  # For async file I/O
+except ImportError:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "aiofiles"])
+    import aiofiles
+
+try:
+    import httpx  # For async HTTP requests
+except ImportError:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "httpx"])
+    import httpx
+
+try:
+    import aiomysql  # For async MySQL database access
+except ImportError:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "aiomysql"])
+    import aiomysql
 
 # Enable logging to see errors
 logging.basicConfig(
