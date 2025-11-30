@@ -36,8 +36,9 @@ USERS_PER_PAGE = 10  # Number of users to show per page in pagination
 DEFAULT_RATE_LIMIT_SECONDS = 300  # Default 5 minutes rate limit (300 seconds)
 
 # --- LOCAL FILE CONFIGURATION ---#  Create a directory to store data files if it doesn't existDATAA_DIR = "bot_data"if  not os.path.exists(DATA_DIR):     os.makedirs(DATA_DIR)
-# --- MYSQL DATABASE CONFIGURATION ---#- Production MySQL configuration (shared hosting)MYSQL _HOST = "localhost"  # Change if your hosting provider gives a different hostMYSQLo_PORT = 3306MYSQLO_USER = "refihzbz_fbchek"MYSQLg_PASSWORD = "Asraf1025@#"MYSQLQ_DB = "refihzbz_fbchek"
-# Global connection pooldbQ_pool = _code
+# --- MYSQL DATABASE CONFIGURATION ---#- Production MySQL configuration (shared hosting)MYSQLS_HOST = "localhost"  # Change if your hosting provider gives a different hostMYSQLS_PORT = 3306MYSQLS_USER = "refihzbz_fbchek"MYSQLS_PASSWORD = "Asraf1025@#"MYSQLS_DB = "refihzbz_fbchek"
+# Global connection pooldbp_pool = _code
+ _code
 tenv("MYSQL_DB", "telegram_bot")
 # Global connection pooldbe_pool = _code
 pool = N_codeonnewe</
