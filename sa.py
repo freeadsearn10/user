@@ -1387,10 +1387,10 @@ def fetch_latest_binance_payment_for_amount(
         mail.login(GMAIL_USERNAME, GMAIL_PASSWORD)
         mail.select("INBOX")
 
-        # Search for recent Binance payment emails
+        # Search for Binance payment emails (both read and unread).
+        # We filter by date and amount in code, so we don't rely on UNSEEN.
         typ, data = mail.search(
             None,
-            "UNSEEN",
             'FROM "binance"',
             'SUBJECT "Payment Receive Successful"',
         )
