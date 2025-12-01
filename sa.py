@@ -1372,6 +1372,7 @@ def fetch_latest_binance_payment_for_amount(
     or None if no suitable email is found.
     """
     if not GMAIL_USERNAME or not GMAIL_PASSWORD:
+        logger.warning("Gmail credentials are not configured.")
         return None
 
     try:
@@ -1400,10 +1401,16 @@ def fetch_latest_binance_payment_for_amount(
             mail.logout()
             return None
 
+        ids = data[0].split()
+        logger.info(
+            "Gmail search returned %d candidate messages for Binance payments.",
+            len(ids),
+        )
+
         best_match: dict | None = None
         best_date: datetime | None = None
 
-        for num in data[0].split():
+        for num in ids:
             typ, msg_data = mail.fetch(num, "(RFC822)")
             if typ != "OK" or not msg_data:
                 continue
@@ -1437,25 +1444,39 @@ def fetch_latest_binance_payment_for_amount(
                     msg_dt = None
 
             if msg_dt and msg_dt < since_dt:
+                logger.info(
+                    "Skipping Binance email %s because it's older than since_dt (%s).",
+                    subject,
+                    since_dt.isoformat(),
+                )
                 continue
 
-            # Extract plain text body
+            # Extract body (prefer text/plain, fall back to text/html)
             body = ""
+            plain_text = ""
+            html_text = ""
+
             if msg.is_multipart():
                 for part in msg.walk():
                     ctype = part.get_content_type()
-                    cdispo = str(part.get("Content-Disposition", ""))
-                    if ctype == "text/plain" and "attachment" not in cdispo:
-                        charset = part.get_content_charset() or "utf-8"
-                        try:
-                            body = part.get_payload(decode=True).decode(
-                                charset, errors="ignore"
-                            )
-                        except Exception:
-                            body = part.get_payload(decode=True).decode(
-                                "utf-8", errors="ignore"
-                            )
-                        break
+                    cdispo = str(part.get("Content-Disposition", "")).lower()
+                    if "attachment" in cdispo:
+                        continue
+
+                    charset = part.get_content_charset() or "utf-8"
+                    try:
+                        part_text = part.get_payload(decode=True).decode(
+                            charset, errors="ignore"
+                        )
+                    except Exception:
+                        part_text = part.get_payload(decode=True).decode(
+                            "utf-8", errors="ignore"
+                        )
+
+                    if ctype == "text/plain":
+                        plain_text += part_text
+                    elif ctype == "text/html":
+                        html_text += part_text
             else:
                 charset = msg.get_content_charset() or "utf-8"
                 try:
@@ -1467,22 +1488,45 @@ def fetch_latest_binance_payment_for_amount(
                         "utf-8", errors="ignore"
                     )
 
+            if not body:
+                if plain_text:
+                    body = plain_text
+                elif html_text:
+                    # Strip HTML tags for simple text search
+                    body = re.sub(r"<[^>]+>", " ", html_text)
+                else:
+                    body = ""
+
             text = subject + "\n" + body
 
+            # More tolerant regex for "Amount: 0.45 USDT" (with optional comma)
             amount_match = re.search(
-                r"Amount\s*[:=]\s*([0-9]+(?:\.[0-9]+)?)\s*USDT",
+                r"Amount\s*[:=]\s*([0-9]+(?:[.,][0-9]+)?)\s*USDT",
                 text,
                 re.IGNORECASE,
             )
             if not amount_match:
+                logger.info("No amount match found in email subject '%s'.", subject)
                 continue
 
             try:
-                amount_val = float(amount_match.group(1))
+                amount_str = amount_match.group(1).replace(",", ".")
+                amount_val = float(amount_str)
             except ValueError:
+                logger.info(
+                    "Failed to parse amount '%s' in email subject '%s'.",
+                    amount_match.group(1),
+                    subject,
+                )
                 continue
 
             if abs(amount_val - expected_amount_usd) > 1e-6:
+                logger.info(
+                    "Amount %.4f does not match expected %.4f for email '%s'.",
+                    amount_val,
+                    expected_amount_usd,
+                    subject,
+                )
                 continue
 
             message_id = msg.get("Message-ID")
@@ -1490,6 +1534,11 @@ def fetch_latest_binance_payment_for_amount(
                 message_id = f"imap-{num.decode(errors='ignore')}"
 
             if message_id in processed_emails:
+                logger.info(
+                    "Email '%s' already processed (message_id=%s). Skipping.",
+                    subject,
+                    message_id,
+                )
                 continue
 
             # Choose the most recent matching email
