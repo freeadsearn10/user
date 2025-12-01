@@ -2555,7 +2555,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             text = get_text(query.from_user.id, "current_price_list")
             for _, value in price_list.items():
                 text += (
-                    f"🔹 <b>{value['duration']}</b>: "
+                    f"🔹 &lt;b&gt;{value['duration']}&lt;/b&gt;: "
                     f"{value['price_bdt']} BDT / {value['price_usd']} USD\n"
                 )
             back_kb = InlineKeyboardMarkup(
@@ -2564,7 +2564,57 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await query.edit_message_text(text, parse_mode="HTML", reply_markup=back_kb)
             return
 
-    return
+        # Handle inline history item selection
+        if data.startswith("history_item_"):
+            try:
+                idx = int(data.replace("history_item_", "", 1))
+            except ValueError:
+                await query.answer()
+                return
+
+            user_id_str = str(query.from_user.id)
+            user_rec = all_users.get(user_id_str, {})
+            history_list = user_rec.get("history", [])
+
+            if idx < 0 or idx >= len(history_list):
+                await query.answer()
+                return
+
+            h = history_list[idx]
+            h_type = h.get("type", "paid")
+            source = h.get("source", "manual")
+            plan_duration = h.get("plan_duration", "Unknown")
+            price_bdt = h.get("price_bdt")
+            price_usd = h.get("price_usd")
+            invoice_id = h.get("invoice_id", "N/A")
+            start_at = h.get("start_at", "")
+            expiry_at = h.get("expiry_at", "")
+
+            if price_bdt not in (None, 0) and price_usd not in (None, 0.0):
+                price_str = f"{price_bdt} BDT / {price_usd} USD"
+            elif h_type == "referral":
+                price_str = "FREE (referral bonus)"
+            else:
+                price_str = "FREE"
+
+            date_label = start_at[:19] if isinstance(start_at, str) else ""
+
+            detail_text = (
+                f"📜 <b>Plan History Detail</b>\n\n"
+                f"🗓 <b>Date:</b> {date_label}\n"
+                f"📦 <b>Plan:</b> {plan_duration}\n"
+                f"💰 <b>Price:</b> {price_str}\n"
+                f"🏷 <b>Type:</b> {h_type} via {source}\n"
+                f"🧾 <b>Invoice ID:</b> <code>{invoice_id}</code>\n"
+                f"⏳ <b>Expires:</b> {expiry_at}"
+            )
+
+            await query.edit_message_text(
+                detail_text, parse_mode="HTML"
+            )
+            return
+
+        return
 
 
 async def approve(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -2949,7 +2999,7 @@ async def list_all_users(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 async def history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show current user's plan history (free + paid)."""
+    """Show current user's plan history (free + paid) in an inline list."""
     user = update.effective_user
     user_id_str = str(user.id)
     user_rec = all_users.get(user_id_str, {})
@@ -2959,48 +3009,26 @@ async def history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_html(get_text(user.id, "no_history"))
         return
 
-    lines: list[str] = [get_text(user.id, "history_header")]
-
+    # Build inline keyboard with one button per history entry
+    buttons: list[list[InlineKeyboardButton]] = []
     for idx, h in enumerate(history_list, start=1):
-        h_type = h.get("type", "paid")
-        source = h.get("source", "manual")
         plan_duration = h.get("plan_duration", "Unknown")
-        price_bdt = h.get("price_bdt")
-        price_usd = h.get("price_usd")
-        invoice_id = h.get("invoice_id", "N/A")
         start_at = h.get("start_at", "")
-        expiry_at = h.get("expiry_at", "")
-
-        if price_bdt not in (None, 0) and price_usd not in (None, 0.0):
-            price_str = f"{price_bdt} BDT / {price_usd} USD"
-        elif h_type == "referral":
-            price_str = "FREE (referral bonus)"
-        else:
-            price_str = "FREE"
-
         date_label = start_at[:10] if isinstance(start_at, str) else ""
-        lines.append(
-            f"#{idx} [{date_label}] {plan_duration} – {price_str} "
-            f"({h_type} via {source})\\n"
-            f"   Invoice ID: <code>{invoice_id}</code>\\n"
-            f"   Expires: {expiry_at}\\n"
+        label = f"#{idx} [{date_label}] {plan_duration}"
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    label, callback_data=f"history_item_{idx-1}"
+                )
+            ]
         )
 
-    text = "\n".join(lines)
+    keyboard = InlineKeyboardMarkup(buttons)
 
-    if len(text) > 4000:
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"history_{user_id_str}_{ts}.txt"
-        async with aiofiles.open(filename, "w", encoding="utf-8") as f:
-            await f.write(text)
-        await context.bot.send_document(
-            chat_id=update.effective_chat.id,
-            document=open(filename, "rb"),
-            caption="Your plan history.",
-        )
-        os.remove(filename)
-    else:
-        await update.message.reply_html(text)
+    await update.message.reply_html(
+        get_text(user.id, "history_header"), reply_markup=keyboard
+    )
 
 
 async def show_price_list_admin(
