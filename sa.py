@@ -15,6 +15,7 @@ import zipfile
 import imaplib
 import email
 from email.header import decode_header, make_header
+from email.utils import parsedate_to_datetime
 from datetime import datetime, timedelta, timezone
 
 # --- THIRD-PARTY DEPENDENCIES (AUTO-INSTALL IF MISSING) ---
@@ -85,7 +86,7 @@ logger = logging.getLogger(__name__)
 
 # --- CONFIGURATION ---
 
-TELEGRAM_BOT_TOKEN = "8499529767:AAHDMLnMOoGI9tTe-Gf3Q3MjpaNxbJKtM1Y"
+TELEGRAM_BOT_TOKEN = "8499529767:AAGh_WYlX178ZAg3Wgquo_BhsoR22gfKKZw"
 
 AUTO_CLEANUP_INTERVAL = 60 * 60  # 1 hour
 DEFAULT_RATE_LIMIT_SECONDS = 300  # 5 minutes
@@ -115,9 +116,9 @@ MYSQL_DB = "refihzbz_fbchek"
 # The bot will automatically poll this Gmail inbox for payment emails.
 GMAIL_IMAP_HOST = "imap.gmail.com"
 GMAIL_IMAP_PORT = 993
-GMAIL_USERNAME = os.getenv("GMAIL_USERNAME", "")
-GMAIL_PASSWORD = os.getenv("GMAIL_PASSWORD",_code "new"</)
-"
+# Defaults are set to your app email; override via environment variables in production.
+GMAIL_USERNAME = os.getenv("GMAIL_USERNAME", "songall558@gmail.com")
+GMAIL_PASSWORD = os.getenv("GMAIL_PASSWORD", "qxkt jsvq euzg pbpe")
 
 # --- PREMIUM ADMIN & APPROVAL SYSTEM ---
 
@@ -131,6 +132,13 @@ all_users: dict[str, dict] = {}
 user_settings: dict[str, dict] = {}
 user_last_request: dict[int, datetime] = {}
 config_data: dict[str, int] = {"rate_limit_seconds": DEFAULT_RATE_LIMIT_SECONDS}
+
+# Pending Binance payments (per user) for Gmail verification
+pending_payments: dict[int, dict] = {}
+
+# Processed Gmail payment emails (Message-ID or IMAP-based ID)
+PROCESSED_EMAILS_FILE = os.path.join(DATA_DIR, "processed_emails.json")
+processed_emails: set[str] = set()
 
 price_list = {
     "1_day": {"duration": "1 Day", "price_bdt": 50, "price_usd": 0.45},
@@ -174,26 +182,23 @@ LANGUAGES = {
         "select_payment_method": "💳 Select a payment method:",
         "payment_binance": "Binance Pay",
         "select_plan_binance": "Select a plan to pay via Binance Pay:",
-        "binance_invoice_coded": "💳 Select a payment method:",
-        "payment_binance": "Binance Pay",
-        "select_plan_binance": "Select a plan to pay via Binance Pay:",
         "binance_invoice": (
-            "Binance Pay Invoice\\n\\n"
-            "Plan: {duration}\\n"
-            "Amount: {price_bdt} BDT (approx. {price_usd} USD)\\n\\n"
-            "Pay exactly {price_usd} USD via Binance Pay to this Pay ID:\\n"
-            "{pay_id}\\n\\n"
-            "After payment, send screenshot or transaction ID to the admin "
-            "(@{admin_username}) and wait for approval."
+            "🧾 <b>Binance Pay Invoice</b>\\n"
+            "📦 Plan: <b>{duration}</b>\\n"
+            "💰 Amount: <b>{price_bdt} BDT</b> (≈ {price_usd} USD)\\n"
+            "➡️ Pay exactly <b>{price_usd} USD</b> via Binance Pay to this Pay ID:\\n"
+            "<code>{pay_id}</code>\\n"
+            "✅ After paying, tap <b>Verify Payment</b> below.\\n"
+            "If there is any issue, contact @{admin_username}."
         ),
         "refer_link": (
-            "🔗 Your Referral Link\\n\\n"
+            "🔗 <b>Your Referral Link</b>\\n\\n"
             "Share this link with your friends:\\n{referral_link}\\n\\n"
-            "Referrals: {referral_count}/3\\n"
+            "👥 Referrals: <b>{referral_count}/3</b>\\n"
         ),
         "refer_earned": "✅ You've earned 2 hours of free access!\\n",
         "refer_needed": (
-            "❌ You need {remaining} more referral(s) to get 2 hours of free access.\\n"
+            "❌ You need <b>{remaining}</b> more referral(s) to get 2 hours of free access.\\n"
         ),
         "referral_status": (
             "🔗 Your Referral Status\\n\\n"
@@ -228,7 +233,7 @@ LANGUAGES = {
         "price_list": "💰 Price List\n\n",
         "payment_methods": (
             "\n💳 Payment Methods:\n"
-            "• Bkash\n• Nagad\n• Rocket\n• PayPal\n• Crypto\n\n"
+            "• Bkash\n• Nagad\n• Binance Pay\n\n"
             "📩 To purchase, please contact the admin.\n"
             "Use /admin to get contact details."
         ),
@@ -318,11 +323,20 @@ LANGUAGES = {
             "⚠️ User {uid} is already approved until {expiry_date}."
         ),
         "export_data_msg": (
-            "📦 Export Data\n\n"
-            "Your bot data is being prepared for download.\n\n"
+            "📦 Export Data\\n\\n"
+            "Your bot data is being prepared for download.\\n\\n"
             "This may take a moment if you have many users."
         ),
         "export_complete": "✅ Export complete. The data has been sent as a zip file.",
+        "no_history": "You have no plan history yet.",
+        "history_header": "📜 Your Plan History\\n\\n",
+        "welcome_after_language": (
+            "👋 Welcome to the Facebook Number Checker Bot!\\n\\n"
+            "🆔 Your User ID: &lt;code&gt;{uid}&lt;/code&gt;\\n\\n"
+            "This bot lets you check Facebook accounts by phone number.\\n"
+            "Access is premium – you can buy a plan or earn free access with referrals.\\n\\n"
+            "Use the buttons below to see the price list or contact the admin."
+        ),
     },
     "bn": {
         "welcome": (
@@ -356,22 +370,22 @@ LANGUAGES = {
         "payment_binance": "Binance Pay",
         "select_plan_binance": "Binance Pay দিয়ে পেমেন্ট করতে একটি প্ল্যান নির্বাচন করুন:",
         "binance_invoice": (
-            "🧾 <b>Binance Pay ইনভয়েস</b>\n\n"
-            "প্ল্যান: <b>{duration}</b>\n"
-            "পরিমাণ: <b>{price_bdt} BDT</b> (≈ {price_usd} USD)\n\n"
-            "Binance Pay এর মাধ্যমে ঠিক <b>{price_usd} USD</b> এই Pay ID তে পাঠান:\n"
-            "<code>{pay_id}</code>\n\n"
-            "পেমেন্ট সম্পন্ন করার পর অ্যাডমিনকে (@{admin_username}) স্ক্রিনশট বা "
-            "ট্রানজ্যাকশন আইডি পাঠান এবং অনুমোদনের জন্য অপেক্ষা করুন।"
+            "🧾 <b>Binance Pay ইনভয়েস</b>\\n"
+            "📦 প্ল্যান: <b>{duration}</b>\\n"
+            "💰 পরিমাণ: <b>{price_bdt} BDT</b> (≈ {price_usd} USD)\\n"
+            "➡️ Binance Pay দিয়ে ঠিক <b>{price_usd} USD</b> এই Pay ID তে পাঠান:\\n"
+            "<code>{pay_id}</code>\\n"
+            "✅ পেমেন্ট করার পর নিচের <b>Verify Payment</b> বাটনে চাপ দিন।\\n"
+            "সমস্যা হলে @{admin_username} এর সাথে যোগাযোগ করুন।"
         ),
         "refer_link": (
-            "🔗 আপনার রেফারেল লিঙ্ক\n\n"
-            "আপনার বন্ধুদের সাথে এই লিঙ্কটি শেয়ার করুন:\n{referral_link}\n\n"
-            "রেফারেল: {referral_count}/3\n"
+            "🔗 <b>আপনার রেফারেল লিঙ্ক</b>\\n\\n"
+            "আপনার বন্ধুদের সাথে এই লিঙ্কটি শেয়ার করুন:\\n{referral_link}\\n\\n"
+            "👥 রেফারেল: <b>{referral_count}/3</b>\\n"
         ),
-        "refer_earned": "✅ আপনি রেফারেলের মাধ্যমে 2 ঘন্টার ফ্রি অ্যাক্সেস অর্জন করেছেন!\n",
+        "refer_earned": "✅ আপনি রেফারেলের মাধ্যমে 2 ঘন্টার ফ্রি অ্যাক্সেস অর্জন করেছেন!\\n",
         "refer_needed": (
-            "❌ 2 ঘন্টার ফ্রি অ্যাক্সেস পেতে আপনার {remaining} আরও রেফারেল(স) প্রয়োজন।\n"
+            "❌ 2 ঘন্টার ফ্রি অ্যাক্সেস পেতে আপনার আরও <b>{remaining}</b> টি রেফারেল প্রয়োজন।\\n"
         ),
         "referral_status": (
             "🔗 আপনার রেফারেল স্ট্যাটাস\n\n"
@@ -405,9 +419,9 @@ LANGUAGES = {
         "price_list": "💰 মূল্য তালিকা\n\n",
         "payment_methods": (
             "\n💳 পেমেন্ট পদ্ধতি:\n"
-            "• বিকাশ\n• নগদ\n• রকেট\n• পেপাল\n• ক্রিপ্টো\n\n"
-            "📩 কেনার জন্য, অনুগ্রহ করে অ্যাডমিনের সাথে যোগাযোগ করুন।\n"
-            "যোগাযোগের বিবরণের জন্য /admin ব্যবহার করুন।"
+            "• বিকাশ\n• নগদ\n• Binance Pay\n\n"
+            "📩 কিনতে হলে অ্যাডমিনের সাথে যোগাযোগ করুন।\n"
+            "যোগাযোগের জন্য /admin ব্যবহার করুন।"
         ),
         "admin_panel": "👑 অ্যাডমিন প্যানেল\n\nনিচের মেনু থেকে একটি অপশন নির্বাচন করুন:",
         "approved_users": "✅ অনুমোদিত ইউজার",
@@ -501,11 +515,20 @@ LANGUAGES = {
             "⚠️ ইউজার {uid} ইতিমধ্যে {expiry_date} পর্যন্ত অনুমোদিত।"
         ),
         "export_data_msg": (
-            "📦 ডেটা এক্সপোর্ট\n\n"
-            "আপনার বট ডেটা ডাউনলোডের জন্য প্রস্তুত করা হচ্ছে।\n\n"
+            "📦 ডেটা এক্সপোর্ট\\n\\n"
+            "আপনার বট ডেটা ডাউনলোডের জন্য প্রস্তুত করা হচ্ছে।\\n\\n"
             "অনেক ইউজার থাকলে এতে কিছুটা সময় লাগতে পারে।"
         ),
         "export_complete": "✅ এক্সপোর্ট সম্পন্ন। ডেটা একটি জিপ ফাইল হিসেবে পাঠানো হয়েছে।",
+        "no_history": "আপনার কোনো প্ল্যান হিস্ট্রি নেই।",
+        "history_header": "📜 আপনার প্ল্যান হিস্ট্রি\\n\\n",
+        "welcome_after_language": (
+            "👋 ফেসবুক নম্বর চেকার বটে স্বাগতম!\\n\\n"
+            "🆔 আপনার ইউজার ID: &lt;code&gt;{uid}&lt;/code&gt;\\n\\n"
+            "এই বটের মাধ্যমে আপনি মোবাইল নম্বর দিয়ে ফেসবুক অ্যাকাউন্ট চেক করতে পারবেন।\\n"
+            "এটি একটি প্রিমিয়াম সার্ভিস – আপনি প্ল্যান কিনতে পারেন, অথবা রেফারেল দিয়ে ফ্রি অ্যাক্সেস পেতে পারেন।\\n\\n"
+            "নিচের বাটনগুলো ব্যবহার করে প্রাইস লিস্ট দেখুন অথবা অ্যাডমিনের সাথে যোগাযোগ করুন।"
+        ),
     },
 }
 
@@ -682,6 +705,26 @@ async def save_user_settings_to_file() -> bool:
     except Exception as e:
         logger.error("Error saving user_settings to MySQL: %s", e)
     return True
+
+
+async def load_processed_emails_from_file() -> None:
+    """
+    Load list of processed Gmail message IDs from file into the set.
+    """
+    global processed_emails
+    data = await load_json(PROCESSED_EMAILS_FILE, [])
+    if isinstance(data, list):
+        processed_emails = set(str(x) for x in data)
+    else:
+        processed_emails = set()
+
+
+async def save_processed_emails_to_file() -> bool:
+    """
+    Save processed Gmail message IDs to file.
+    """
+    data = list(processed_emails)
+    return await save_json(PROCESSED_EMAILS_FILE, data)
 
 
 async def save_user_details_to_file(user_id: int, user_data: dict) -> bool:
@@ -1016,6 +1059,9 @@ def get_text(user_id: int, key: str, **kwargs) -> str:
             text = text.format(**kwargs)
         except (KeyError, ValueError) as e:
             logger.error("Error formatting text for key '%s': %s", key, e)
+    # Ensure any literal "\\n" sequences are rendered as real newlines
+    # so messages appear line-by-line instead of showing "\\n" in chat.
+    text = text.replace("\\n", "\n")
     return text
 
 # ---------------------------------------------------------------------------
@@ -1085,6 +1131,27 @@ async def process_referral(
         await save_all_users_to_file()
 
         await save_users_to_file()
+
+        # Append history entry for referral bonus
+        user_history = user_rec.get("history")
+        if not isinstance(user_history, list):
+            user_history = []
+            user_rec["history"] = user_history
+        user_history.append(
+            {
+                "type": "referral",
+                "source": "referral",
+                "plan_duration": "2 hours (referral bonus)",
+                "price_bdt": 0,
+                "price_usd": 0.0,
+                "invoice_id": "referral_bonus",
+                "start_at": datetime.now(timezone.utc).isoformat(),
+                "expiry_at": expiry_date.isoformat(),
+            }
+        )
+
+        await save_all_users_to_file()
+
         await send_user_notification(
             context,
             referrer_id,
@@ -1283,34 +1350,58 @@ async def auto_cleanup_task(context: ContextTypes.DEFAULT_TYPE) -> None:
         await asyncio.sleep(AUTO_CLEANUP_INTERVAL)
 
 
-def fetch_gmail_payments_sync() -> list[dict]:
+async def cleanup_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """JobQueue task: periodic cleanup of expired users."""
+    removed = await cleanup_expired_users()
+    if removed > 0:
+        logger.info("Auto cleanup job removed %d users", removed)
+
+
+def fetch_latest_binance_payment_for_amount(
+    expected_amount_usd: float, since_iso: str
+) -> dict | None:
     """
-    Blocking helper to fetch payment events from Gmail via IMAP.
+    Blocking helper to fetch the latest Binance payment email from Gmail
+    matching the expected USDT amount and received after a given time.
 
-    Expected format somewhere in the subject or body:
-      TGID: &lt;telegram_user_id&gt;
-      PLAN: &lt;amount&gt; &lt;unit&gt;
-
-    Example:
-      TGID: 123456789
-      PLAN: 7 days
+    Returns a dict with keys:
+      - message_id
+      - subject
+      - amount
+      - date (ISO string)
+    or None if no suitable email is found.
     """
-    events: list[dict] = []
-
     if not GMAIL_USERNAME or not GMAIL_PASSWORD:
-        return events
+        return None
 
     try:
+        try:
+            since_dt = datetime.fromisoformat(since_iso)
+        except Exception:
+            since_dt = datetime.now(timezone.utc) - timedelta(minutes=30)
+
+        if since_dt.tzinfo is None:
+            since_dt = since_dt.replace(tzinfo=timezone.utc)
+
         mail = imaplib.IMAP4_SSL(GMAIL_IMAP_HOST, GMAIL_IMAP_PORT)
         mail.login(GMAIL_USERNAME, GMAIL_PASSWORD)
         mail.select("INBOX")
 
-        typ, data = mail.search(None, "UNSEEN")
+        # Search for recent Binance payment emails
+        typ, data = mail.search(
+            None,
+            "UNSEEN",
+            'FROM "binance"',
+            'SUBJECT "Payment Receive Successful"',
+        )
         if typ != "OK":
             logger.error("Gmail IMAP search failed: %s", typ)
             mail.close()
             mail.logout()
-            return events
+            return None
+
+        best_match: dict | None = None
+        best_date: datetime | None = None
 
         for num in data[0].split():
             typ, msg_data = mail.fetch(num, "(RFC822)")
@@ -1326,6 +1417,29 @@ def fetch_gmail_payments_sync() -> list[dict]:
             except Exception:
                 subject = raw_subject
 
+            from_header = msg.get("From", "")
+            if "binance" not in from_header.lower():
+                continue
+            if "payment receive successful" not in subject.lower():
+                continue
+
+            # Parse date
+            msg_date_str = msg.get("Date")
+            msg_dt = None
+            if msg_date_str:
+                try:
+                    msg_dt = parsedate_to_datetime(msg_date_str)
+                    if msg_dt.tzinfo is None:
+                        msg_dt = msg_dt.replace(tzinfo=timezone.utc)
+                    else:
+                        msg_dt = msg_dt.astimezone(timezone.utc)
+                except Exception:
+                    msg_dt = None
+
+            if msg_dt and msg_dt < since_dt:
+                continue
+
+            # Extract plain text body
             body = ""
             if msg.is_multipart():
                 for part in msg.walk():
@@ -1355,183 +1469,53 @@ def fetch_gmail_payments_sync() -> list[dict]:
 
             text = subject + "\n" + body
 
-            tgid_match = re.search(r"TGID[:=]\s*(\d+)", text, re.IGNORECASE)
-            plan_match = re.search(
-                r"PLAN[:=]\s*(\d+)\s*(hour|hours|day|days|month|months)",
+            amount_match = re.search(
+                r"Amount\s*[:=]\s*([0-9]+(?:\.[0-9]+)?)\s*USDT",
                 text,
                 re.IGNORECASE,
             )
+            if not amount_match:
+                continue
 
-            if tgid_match and plan_match:
-                user_id = int(tgid_match.group(1))
-                amount = int(plan_match.group(1))
-                unit = plan_match.group(2)
-                events.append(
-                    {
-                        "user_id": user_id,
-                        "amount": amount,
-                        "unit": unit,
-                        "subject": subject,
-                    }
-                )
-                # Mark processed so we do not handle again
-                try:
-                    mail.store(num, "+FLAGS", "\\Seen")
-                except Exception:
-                    pass
+            try:
+                amount_val = float(amount_match.group(1))
+            except ValueError:
+                continue
+
+            if abs(amount_val - expected_amount_usd) > 1e-6:
+                continue
+
+            message_id = msg.get("Message-ID")
+            if not message_id:
+                message_id = f"imap-{num.decode(errors='ignore')}"
+
+            if message_id in processed_emails:
+                continue
+
+            # Choose the most recent matching email
+            if msg_dt is None:
+                candidate_better = best_match is None
             else:
-                # Mark as seen so we do not repeatedly parse irrelevant emails
-                try:
-                    mail.store(num, "+FLAGS", "\\Seen")
-                except Exception:
-                    pass
+                if best_date is None:
+                    candidate_better = True
+                else:
+                    candidate_better = msg_dt > best_date
+
+            if candidate_better:
+                best_match = {
+                    "message_id": message_id,
+                    "subject": subject,
+                    "amount": amount_val,
+                    "date": msg_dt.isoformat() if msg_dt else "",
+                }
+                best_date = msg_dt
 
         mail.close()
         mail.logout()
+        return best_match
     except Exception as e:
-        logger.error("Error while checking Gmail for payments: %s", e)
-
-    return events
-
-
-async def process_auto_payment(
-    context: ContextTypes.DEFAULT_TYPE,
-    user_id_to_approve: int,
-    amount: int,
-    unit: str,
-    subject: str,
-) -> None:
-    """
-    Apply a paid plan to a user based on Gmail-detected payment.
-    Behaves similarly to /approve but without needing an Update.
-    """
-    try:
-        now = datetime.now(timezone.utc)
-        base_time = now
-        current_expiry = approved_users.get(user_id_to_approve)
-        if current_expiry is not None and current_expiry > now:
-            base_time = current_expiry
-
-        unit_l = unit.lower()
-
-        if unit_l.startswith("hour"):
-            expiry_date = base_time + timedelta(hours=amount)
-        elif unit_l.startswith("day"):
-            expiry_date = base_time + timedelta(days=amount)
-        elif unit_l.startswith("month"):
-            expiry_date = base_time + timedelta(days=amount * 30)
-        else:
-            await context.bot.send_message(
-                chat_id=ADMIN_ID,
-                text=(
-                    f"⚠️ Gmail payment detected for user {user_id_to_approve}, "
-                    f"but unit '{unit}' is not recognized. Subject: {subject}"
-                ),
-            )
-            return
-
-        # Derive and store plan info (duration and price, if from price_list)
-        plan_duration = f"{amount} {unit_l}"
-        plan_price_bdt = None
-        plan_price_usd = None
-
-        if unit_l.startswith("day"):
-            for value in price_list.values():
-                try:
-                    num_str, unit_str = value["duration"].split()[:2]
-                    num_days = int(num_str)
-                except Exception:
-                    continue
-                if num_days == amount and unit_str.lower().startswith("day"):
-                    plan_duration = value["duration"]
-                    plan_price_bdt = value.get("price_bdt")
-                    plan_price_usd = value.get("price_usd")
-                    break
-
-        user_id_str = str(user_id_to_approve)
-        user_rec = all_users.setdefault(user_id_str, {})
-        user_rec.setdefault("first_name", "")
-        user_rec.setdefault("last_name", "")
-        user_rec.setdefault("username", "")
-        user_rec["last_interaction"] = datetime.now().isoformat()
-        user_rec["plan_duration"] = plan_duration
-        if plan_price_bdt is not None:
-            user_rec["plan_price_bdt"] = plan_price_bdt
-        if plan_price_usd is not None:
-            user_rec["plan_price_usd"] = plan_price_usd
-
-        approved_users[user_id_to_approve] = expiry_date
-
-        await save_all_users_to_file()
-        await save_users_to_file()
-
-        expiry_str = expiry_date.strftime("%Y-%m-%d %H:%M:%S UTC")
-
-        # Notify admin
-        try:
-            await context.bot.send_message(
-                chat_id=ADMIN_ID,
-                text=(
-                    f"✅ Auto-approved user {user_id_to_approve} from Gmail payment.\n"
-                    f"Subject: {subject}\n"
-                    f"Plan: {plan_duration}\n"
-                    f"Expires: {expiry_str}"
-                ),
-            )
-        except Exception as e:
-            logger.error(
-                "Failed to notify admin about Gmail auto-approval for %s: %s",
-                user_id_to_approve,
-                e,
-            )
-
-        # Notify user (if possible)
-        try:
-            await send_user_notification(
-                context,
-                user_id_to_approve,
-                get_text(
-                    user_id_to_approve,
-                    "access_approved",
-                    expiry_date=expiry_str,
-                ),
-            )
-        except Exception as e:
-            logger.error(
-                "Failed to notify user %s after Gmail auto-approval: %s",
-                user_id_to_approve,
-                e,
-            )
-    except Exception as e:
-        logger.error(
-            "Error while auto-approving user %s from Gmail payment: %s",
-            user_id_to_approve,
-            e,
-        )
-
-
-async def check_gmail_for_payments(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Periodic job: check Gmail inbox for payment emails and auto-approve users.
-    """
-    events = await asyncio.get_running_loop().run_in_executor(
-        None, fetch_gmail_payments_sync
-    )
-    if not events:
-        return
-
-    for event in events:
-        await process_auto_payment(
-            context,
-            event["user_id"],
-            event["amount"],
-            event["unit"],
-            event["subject"],
-        )
-
-
-async def gmail_payment_job(context: ContextTypes.DEFAULT_TYPE) -> None:
-    await check_gmail_for_payments(context)
+        logger.error("Error while checking Gmail for Binance payments: %s", e)
+        return None
 
 
 async def export_bot_data() -> io.BytesIO | None:
@@ -1721,7 +1705,7 @@ async def show_admin_commands(update: Update, context: ContextTypes.DEFAULT_TYPE
     keyboard = [
         [
             InlineKeyboardButton("✅ Approved users", callback_data="admin_list_approved"),
-            InlineKeyboardButton("📊 Stats", callback_data="admin_list_all"),
+            InlineKeyboardButton("👥 All users", callback_data="admin_list_all"),
         ],
         [
             InlineKeyboardButton("➕ Approve user", callback_data="admin_help_approve"),
@@ -1876,6 +1860,29 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             chat_id=query.message.chat_id,
             text=get_text(query.from_user.id, "example"),
         )
+
+        # After setting language, show a rich welcome with user ID and quick actions
+        welcome_text = get_text(
+            query.from_user.id,
+            "welcome_after_language",
+            uid=query.from_user.id,
+        )
+        admin_username_clean = ADMIN_USERNAME.lstrip("@")
+        keyboard = [
+            [InlineKeyboardButton("💰 Price list", callback_data="back_to_price")],
+            [
+                InlineKeyboardButton(
+                    "📞 Contact admin",
+                    url=f"https://t.me/{admin_username_clean}",
+                )
+            ],
+        ]
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=welcome_text,
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
         return
 
     # Normal user buttons
@@ -1951,7 +1958,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     if query.data.startswith("pay_binance_plan_"):
-        # Show simple invoice with Binance Pay ID
+        # Show invoice with Binance Pay ID and store pending payment
         plan_key = query.data.replace("pay_binance_plan_", "", 1)
         plan = price_list.get(plan_key)
         if not plan:
@@ -1960,6 +1967,14 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
         user_id = query.from_user.id
         admin_username_clean = ADMIN_USERNAME.lstrip("@")
+
+        # Store pending payment info for this user so Verify Payment can use it
+        pending_payments[user_id] = {
+            "plan_key": plan_key,
+            "amount_usd": float(plan.get("price_usd", 0)),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+
         text = get_text(
             user_id,
             "binance_invoice",
@@ -1973,6 +1988,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         keyboard = [
             [
                 InlineKeyboardButton(
+                    "✅ Verify Payment", callback_data=f"verify_binance_{plan_key}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     "💬 Contact Admin",
                     url=f"https://t.me/{admin_username_clean}",
                 )
@@ -1983,6 +2003,180 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await query.edit_message_text(
             text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard)
         )
+        return
+
+    if query.data.startswith("verify_binance_"):
+        # User-triggered Gmail verification for Binance payment
+        plan_key = query.data.replace("verify_binance_", "", 1)
+        user_id = query.from_user.id
+
+        if not GMAIL_USERNAME or not GMAIL_PASSWORD:
+            await query.edit_message_text(
+                "❌ Auto verification is not configured. Please contact the admin."
+            )
+            return
+
+        plan = price_list.get(plan_key)
+        if not plan:
+            await query.edit_message_text("Selected plan not found.")
+            return
+
+        expected_amount = float(plan.get("price_usd", 0))
+        pending = pending_payments.get(user_id)
+        if pending and pending.get("plan_key") == plan_key:
+            since_iso = pending.get("created_at", "")
+        else:
+            # Fallback: look back 30 minutes
+            since_iso = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
+
+        admin_username_clean = ADMIN_USERNAME.lstrip("@")
+
+        # Keep the same keyboard so user can retry Verify Payment if needed
+        verify_keyboard = [
+            [
+                InlineKeyboardButton(
+                    "✅ Verify Payment", callback_data=f"verify_binance_{plan_key}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "💬 Contact Admin",
+                    url=f"https://t.me/{admin_username_clean}",
+                )
+            ],
+            [InlineKeyboardButton("🔙 Back", callback_data="pay_binance")],
+        ]
+
+        await query.edit_message_text(
+            "🔎 Verifying payment, please wait...",
+            reply_markup=InlineKeyboardMarkup(verify_keyboard),
+        )
+
+        loop = asyncio.get_running_loop()
+        event = await loop.run_in_executor(
+            None, fetch_latest_binance_payment_for_amount, expected_amount, since_iso
+        )
+
+        if not event:
+            await query.edit_message_text(
+                "❌ Payment not found yet.\\n\\n"
+                "Make sure you have completed the payment and wait 1–2 minutes, "
+                "then press Verify Payment again. If the problem continues, "
+                "please contact the admin.",
+                reply_markup=InlineKeyboardMarkup(verify_keyboard),
+            )
+            return
+
+        message_id = event.get("message_id")
+        subject = event.get("subject", "")
+        if message_id:
+            processed_emails.add(message_id)
+            await save_processed_emails_to_file()
+
+        # Determine expiry based on plan duration, extending existing access if needed
+        now = datetime.now(timezone.utc)
+        current_expiry = approved_users.get(user_id)
+        base_time = now
+        if current_expiry is not None and current_expiry > now:
+            base_time = current_expiry
+
+        duration_str = plan.get("duration", "")
+        amount_days = None
+        amount_hours = None
+        amount_months = None
+        try:
+            num_str, unit_str = duration_str.split()[:2]
+            num_val = int(num_str)
+            unit_l = unit_str.lower()
+            if unit_l.startswith("hour"):
+                amount_hours = num_val
+            elif unit_l.startswith("day"):
+                amount_days = num_val
+            elif unit_l.startswith("month"):
+                amount_months = num_val
+        except Exception:
+            # Default to days=1 if parsing fails
+            amount_days = 1
+
+        if amount_hours is not None:
+            expiry_date = base_time + timedelta(hours=amount_hours)
+        elif amount_months is not None:
+            expiry_date = base_time + timedelta(days=amount_months * 30)
+        else:
+            expiry_days = amount_days if amount_days is not None else 1
+            expiry_date = base_time + timedelta(days=expiry_days)
+
+        approved_users[user_id] = expiry_date
+
+        user_id_str = str(user_id)
+        user_rec = all_users.setdefault(user_id_str, {})
+        user_rec.setdefault("first_name", query.from_user.first_name)
+        user_rec.setdefault("last_name", query.from_user.last_name)
+        user_rec.setdefault("username", query.from_user.username)
+        user_rec["last_interaction"] = datetime.now().isoformat()
+        user_rec["plan_duration"] = duration_str or plan.get("duration", "")
+        user_rec["plan_price_bdt"] = plan.get("price_bdt")
+        user_rec["plan_price_usd"] = plan.get("price_usd")
+
+        # Append paid history entry for this Binance payment
+        history_list = user_rec.get("history")
+        if not isinstance(history_list, list):
+            history_list = []
+            user_rec["history"] = history_list
+        history_list.append(
+            {
+                "type": "paid",
+                "source": "binance",
+                "plan_duration": duration_str or plan.get("duration", ""),
+                "price_bdt": plan.get("price_bdt"),
+                "price_usd": plan.get("price_usd"),
+                "invoice_id": message_id or "N/A",
+                "start_at": base_time.isoformat(),
+                "expiry_at": expiry_date.isoformat(),
+            }
+        )
+
+        await save_all_users_to_file()
+        await save_users_to_file()
+
+        expiry_str = expiry_date.strftime("%Y-%m-%d %H:%M:%S UTC")
+
+        # Notify admin
+        try:
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=(
+                    f"✅ User {user_id} auto-approved via Verify Payment.\n"
+                    f"Plan: {duration_str or plan.get('duration', '')}\n"
+                    f"Expires: {expiry_str}\n"
+                    f"Email subject: {subject}"
+                ),
+            )
+        except Exception as e:
+            logger.error(
+                "Failed to notify admin after Verify Payment for %s: %s",
+                user_id,
+                e,
+            )
+
+        # Update the invoice message to show success and remove Verify button
+        await query.edit_message_text(
+            f"✅ Payment verified successfully!\\n\\n"
+            f"Your access is valid until: {expiry_str}",
+            parse_mode="HTML",
+        )
+
+        # Notify user with localized access_approved message
+        try:
+            await send_user_notification(
+                context,
+                user_id,
+                get_text(user_id, "access_approved", expiry_date=expiry_str),
+            )
+        except Exception as e:
+            logger.error(
+                "Failed to send access_approved notification to %s: %s", user_id, e
+            )
         return
 
     if query.data == "refer":
@@ -2404,6 +2598,25 @@ async def approve(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             user_rec["plan_price_bdt"] = plan_price_bdt
         if plan_price_usd is not None:
             user_rec["plan_price_usd"] = plan_price_usd
+
+        # Append manual approval history entry
+        history_list = user_rec.get("history")
+        if not isinstance(history_list, list):
+            history_list = []
+            user_rec["history"] = history_list
+        history_list.append(
+            {
+                "type": "paid",
+                "source": "manual",
+                "plan_duration": plan_duration,
+                "price_bdt": plan_price_bdt,
+                "price_usd": plan_price_usd,
+                "invoice_id": "manual_approve",
+                "start_at": datetime.now(timezone.utc).isoformat(),
+                "expiry_at": expiry_date.isoformat(),
+            }
+        )
+
         await save_all_users_to_file()
 
         approved_users[user_id_to_approve] = expiry_date
@@ -2681,6 +2894,61 @@ async def list_all_users(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             chat_id=update.effective_chat.id,
             document=open(filename, "rb"),
             caption="List of all users who have interacted with the bot.",
+        )
+        os.remove(filename)
+    else:
+        await update.message.reply_html(text)
+
+
+async def history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show current user's plan history (free + paid)."""
+    user = update.effective_user
+    user_id_str = str(user.id)
+    user_rec = all_users.get(user_id_str, {})
+    history_list = user_rec.get("history", [])
+
+    if not history_list:
+        await update.message.reply_html(get_text(user.id, "no_history"))
+        return
+
+    lines: list[str] = [get_text(user.id, "history_header")]
+
+    for idx, h in enumerate(history_list, start=1):
+        h_type = h.get("type", "paid")
+        source = h.get("source", "manual")
+        plan_duration = h.get("plan_duration", "Unknown")
+        price_bdt = h.get("price_bdt")
+        price_usd = h.get("price_usd")
+        invoice_id = h.get("invoice_id", "N/A")
+        start_at = h.get("start_at", "")
+        expiry_at = h.get("expiry_at", "")
+
+        if price_bdt not in (None, 0) and price_usd not in (None, 0.0):
+            price_str = f"{price_bdt} BDT / {price_usd} USD"
+        elif h_type == "referral":
+            price_str = "FREE (referral bonus)"
+        else:
+            price_str = "FREE"
+
+        date_label = start_at[:10] if isinstance(start_at, str) else ""
+        lines.append(
+            f"#{idx} [{date_label}] {plan_duration} – {price_str} "
+            f"({h_type} via {source})\\n"
+            f"   Invoice ID: <code>{invoice_id}</code>\\n"
+            f"   Expires: {expiry_at}\\n"
+        )
+
+    text = "\n".join(lines)
+
+    if len(text) > 4000:
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"history_{user_id_str}_{ts}.txt"
+        async with aiofiles.open(filename, "w", encoding="utf-8") as f:
+            await f.write(text)
+        await context.bot.send_document(
+            chat_id=update.effective_chat.id,
+            document=open(filename, "rb"),
+            caption="Your plan history.",
         )
         os.remove(filename)
     else:
@@ -3012,6 +3280,7 @@ async def load_all_data() -> None:
         load_all_users_from_file(),
         load_price_list_from_file(),
         load_user_settings_from_file(),
+        load_processed_emails_from_file(),
     )
     try:
         await init_db()
@@ -3034,6 +3303,7 @@ def main() -> None:
     application.add_handler(CommandHandler("referral", referral_status))
     application.add_handler(CommandHandler("price", show_price_list))
     application.add_handler(CommandHandler("lang", change_language))
+    application.add_handler(CommandHandler("history", history))
 
     # Admin commands
     application.add_handler(CommandHandler("approve", approve))
@@ -3056,9 +3326,20 @@ def main() -> None:
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
     )
 
+    # Schedule periodic cleanup of expired users (every 60 seconds) if JobQueue is available
+    jq = getattr(application, "job_queue", None)
+    if jq is not None:
+        jq.run_repeating(cleanup_job, interval=60, first=60)
+    else:
+        logger.warning(
+            "JobQueue not available. Auto cleanup is disabled. "
+            'Install python-telegram-bot with "job-queue" extra to enable it.'
+        )
+
     logger.info("Bot is starting...")
     application.run_polling()
 
 
 if __name__ == "__main__":
     main()
+
