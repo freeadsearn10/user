@@ -1,44 +1,99 @@
-import logging
-import requests
-import json
-import concurrent.futures
-import os
+from __future__ import annotations
+
 import asyncio
-from datetime import datetime, timedelta, timezone
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters, CallbackQueryHandler
-from telegram.error import BadRequest
-import base64
+import html
+import io
+import json
+import logging
+import os
 import random
+import re
 import string
-import html  # Added for HTML escaping
-import re  # Added for removing HTML tags
-import zipfile  # Added for creating zip files
-import io  # Added for in-memory file operations
+import sys
+import subprocess
+import zipfile
+import imaplib
+import email
+from email.header import decode_header, make_header
+from datetime import datetime, timedelta, timezone
 
-# --- NEW IMPORTS FOR ASYNC OPERATIONS ---
-import aiofiles  # For async file I/O
-import httpx     # For async HTTP requests
+# --- THIRD-PARTY DEPENDENCIES (AUTO-INSTALL IF MISSING) ---
 
-# Enable logging to see errors
+try:
+    import requests  # noqa: F401
+except ImportError:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "requests"])
+    import requests  # noqa: F401
+
+try:
+    from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+    from telegram.ext import (
+        Application,
+        CallbackQueryHandler,
+        CommandHandler,
+        ContextTypes,
+        MessageHandler,
+        filters,
+    )
+    from telegram.error import BadRequest
+except ImportError:
+    subprocess.check_call(
+        [sys.executable, "-m", "pip", "install", "python-telegram-bot"]
+    )
+    from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+    from telegram.ext import (
+        Application,
+        CallbackQueryHandler,
+        CommandHandler,
+        ContextTypes,
+        MessageHandler,
+        filters,
+    )
+    from telegram.error import BadRequest
+
+try:
+    import aiofiles  # For async file I/O
+except ImportError:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "aiofiles"])
+    import aiofiles
+
+try:
+    import httpx  # For async HTTP requests
+except ImportError:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "httpx"])
+    import httpx
+
+try:
+    import aiomysql  # For async MySQL database access
+except ImportError:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "aiomysql"])
+    import aiomysql
+
+# Ensure cryptography is available for some MySQL auth methods
+try:
+    import cryptography  # noqa: F401
+except ImportError:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "cryptography"])
+    import cryptography  # noqa: F401
+
+# --- LOGGING ---
+
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
 # --- CONFIGURATION ---
-TELEGRAM_BOT_TOKEN = '8499529767:AAHd3L5QTaJpcgqqadYCKv6FXTMADuniCVM'
-MAX_WORKERS = 100  # This is no longer used for HTTP, but kept for reference
-FILE_SEND_THRESHOLD = 120  # This is no longer used in the logic, but kept for reference
-AUTO_CLEANUP_INTERVAL = 100  # Auto cleanup every hour (in seconds)
-USERS_PER_PAGE = 10  # Number of users to show per page in pagination
-DEFAULT_RATE_LIMIT_SECONDS = 300  # Default 5 minutes rate limit (300 seconds)
+
+TELEGRAM_BOT_TOKEN = "8499529767:AAHDMLnMOoGI9tTe-Gf3Q3MjpaNxbJKtM1Y"
+
+AUTO_CLEANUP_INTERVAL = 60 * 60  # 1 hour
+DEFAULT_RATE_LIMIT_SECONDS = 300  # 5 minutes
 
 # --- LOCAL FILE CONFIGURATION ---
-# Create a directory to store data files if it doesn't exist
+
 DATA_DIR = "bot_data"
-if not os.path.exists(DATA_DIR):
-    os.makedirs(DATA_DIR)
+os.makedirs(DATA_DIR, exist_ok=True)
 
 USER_DATA_FILE = os.path.join(DATA_DIR, "approved_users.json")
 REFERRAL_DATA_FILE = os.path.join(DATA_DIR, "referral_data.json")
@@ -47,90 +102,182 @@ PRICE_LIST_FILE = os.path.join(DATA_DIR, "price_list.json")
 USER_SETTINGS_FILE = os.path.join(DATA_DIR, "user_settings.json")
 CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
 
+# --- MYSQL DATABASE CONFIGURATION ---
+
+MYSQL_HOST = "localhost"
+MYSQL_PORT = 3306
+MYSQL_USER = "refihzbz_fbchek"
+MYSQL_PASSWORD = "Asraf1025@#"
+MYSQL_DB = "refihzbz_fbchek"
+
+# --- GMAIL PAYMENT CHECK CONFIGURATION ---
+# Set these via environment variables for security if possible.
+# The bot will automatically poll this Gmail inbox for payment emails.
+GMAIL_IMAP_HOST = "imap.gmail.com"
+GMAIL_IMAP_PORT = 993
+GMAIL_USERNAME = os.getenv("GMAIL_USERNAME", "")
+GMAIL_PASSWORD = os.getenv("GMAIL_PASSWORD",_code "new"</)
+"
+
 # --- PREMIUM ADMIN & APPROVAL SYSTEM ---
+
 ADMIN_ID = 7646847122
-ADMIN_USERNAME = '@Teamredadmin'
+ADMIN_USERNAME = "@Teamredadmin"
 ADMIN_FIRST_NAME = "DOREMON"
-approved_users = {ADMIN_ID: None}
-referral_data = {}
-all_users = {}
-user_settings = {}
-user_last_request = {}  # Track last request time for rate limiting
-config_data = {"rate_limit_seconds": DEFAULT_RATE_LIMIT_SECONDS} # Config for rate limit and other settings
-# Fixed price list - removed price change functionality
+
+approved_users: dict[int, datetime | None] = {ADMIN_ID: None}
+referral_data: dict[str, dict] = {}
+all_users: dict[str, dict] = {}
+user_settings: dict[str, dict] = {}
+user_last_request: dict[int, datetime] = {}
+config_data: dict[str, int] = {"rate_limit_seconds": DEFAULT_RATE_LIMIT_SECONDS}
+
 price_list = {
     "1_day": {"duration": "1 Day", "price_bdt": 50, "price_usd": 0.45},
     "3_days": {"duration": "3 Days", "price_bdt": 140, "price_usd": 1.25},
     "7_days": {"duration": "7 Days", "price_bdt": 300, "price_usd": 2.70},
     "15_days": {"duration": "15 Days", "price_bdt": 600, "price_usd": 5.40},
-    "30_days": {"duration": "30 Days", "price_bdt": 1000, "price_usd": 9.00}
+    "30_days": {"duration": "30 Days", "price_bdt": 1000, "price_usd": 9.00},
 }
 
-# --- LANGUAGE STRINGS ---
+# --- LANGUAGE STRINGS (EN & BN) ---
+
 LANGUAGES = {
     "en": {
-        "welcome": "👋 Hi {first_name}!\n\nWelcome to the Facebook Number Checker Bot.\n\nPlease select your preferred language:",
-        "language_selected": "✅ Language has been set to English.\n\nThis is a premium service. Send me a list of phone numbers to check.\n\n🔐 Need access? Use /admin to contact support.",
+        "welcome": (
+            "👋 Hi {first_name}!\n\n"
+            "Welcome to the Facebook Number Checker Bot.\n\n"
+            "Please select your preferred language:"
+        ),
+        "language_selected": (
+            "✅ Language has been set to English.\n\n"
+            "This is a premium service. Send me a list of phone numbers to check.\n\n"
+            "🔐 Need access? Use /admin to contact support."
+        ),
         "example": "Example:\n+8801712345678\n+8801812345678",
-        "access_denied": "🚫 Access Denied!\n\nThis is a premium service for paid users only. It runs on a VPS with premium proxies to avoid rate limitations.\n\nYour User ID: {uid}\n\nPlease contact the admin to get access.\nUse /admin to get support contact.",
-        "buy_online": "Buy Online (Coming Soon)",
+        "access_denied": (
+            "🚫 Access Denied!\n\n"
+            "This is a premium service for paid users only. It runs on a VPS with "
+            "premium proxies to avoid rate limitations.\n\n"
+            "Your User ID: {uid}\n\n"
+            "Please contact the admin to get access.\n"
+            "Use /admin to get support contact."
+        ),
+        "buy_online": "Buy Online",
         "refer_earn": "Refer & Earn Free Access",
-        "buy_online_msg": "🛒 Buy Online\n\nOnline payment option is coming soon!\n\nFor now, please contact the admin directly to purchase access.\nUse /admin to get contact details.",
-        "refer_link": "🔗 Your Referral Link\n\nShare this link with your friends:\n{referral_link}\n\nReferrals: {referral_count}/3\n",
-        "refer_earned": "✅ You've earned 2 hours of free access!\n",
-        "refer_needed": "❌ You need {remaining} more referral(s) to get 2 hours of free access.\n",
-        "referral_status": "🔗 Your Referral Status\n\nYour referral code: {referral_code}\nYour referral link:\n{referral_link}\n\nReferrals: {referral_count}/3\n",
-        "access_until": "✅ You have access until: {expiry_date}\n",
+        "buy_online_msg": (
+            "🛒 Buy Online\n\n"
+            "Online payment option is coming soon!\n\n"
+            "For now, please contact the admin directly to purchase access.\n"
+            "Use /admin to get contact details."
+        ),
+        "select_payment_method": "💳 Select a payment method:",
+        "payment_binance": "Binance Pay",
+        "select_plan_binance": "Select a plan to pay via Binance Pay:",
+        "binance_invoice_coded": "💳 Select a payment method:",
+        "payment_binance": "Binance Pay",
+        "select_plan_binance": "Select a plan to pay via Binance Pay:",
+        "binance_invoice": (
+            "Binance Pay Invoice\\n\\n"
+            "Plan: {duration}\\n"
+            "Amount: {price_bdt} BDT (approx. {price_usd} USD)\\n\\n"
+            "Pay exactly {price_usd} USD via Binance Pay to this Pay ID:\\n"
+            "{pay_id}\\n\\n"
+            "After payment, send screenshot or transaction ID to the admin "
+            "(@{admin_username}) and wait for approval."
+        ),
+        "refer_link": (
+            "🔗 Your Referral Link\\n\\n"
+            "Share this link with your friends:\\n{referral_link}\\n\\n"
+            "Referrals: {referral_count}/3\\n"
+        ),
+        "refer_earned": "✅ You've earned 2 hours of free access!\\n",
+        "refer_needed": (
+            "❌ You need {remaining} more referral(s) to get 2 hours of free access.\\n"
+        ),
+        "referral_status": (
+            "🔗 Your Referral Status\\n\\n"
+            "Your referral code: {referral_code}\\n"
+            "Your referral link:\\n{referral_link}\\n\\n"
+            "Referrals: {referral_count}/3\\n"
+        ),
+        "access_until": "✅ You have access until: {expiry_date}\\n",
         "permanent_access": "✅ You have permanent access.\n",
         "processing": "🚀 Processing your numbers... Please wait.",
-        "no_numbers": "❌ You didn't send any valid numbers. Please send numbers, one per line.",
+        "no_numbers": (
+            "❌ You didn't send any valid numbers. "
+            "Please send numbers, one per line."
+        ),
         "check_complete": "--- ✅ Check Complete! ---\n\n",
         "found_numbers": "✅ Found Numbers:\n",
         "not_found_numbers": "❌ Not Found Numbers:\n",
         "errors_unknown": "⚠️ Errors/Unknown:\n",
         "no_valid_numbers": "Could not process any numbers. Please check the format.",
-        "rate_limit": "⏳ Rate Limit Exceeded!\n\nYou can only make one request every {time_limit}.\n\nPlease wait {remaining_time} before trying again.",
-        "admin_contact": "👑 Admin Contact Information\n\n👤 Name: {admin_name}\n🆔 ID: {admin_id}\n🔗 Username: {admin_username}\n\nPlease contact the admin for approval or support.",
+        "rate_limit": (
+            "⏳ Rate Limit Exceeded!\n\n"
+            "You can only make one request every {time_limit}.\n\n"
+            "Please wait {remaining_time} before trying again."
+        ),
+        "admin_contact": (
+            "👑 Admin Contact Information\n\n"
+            "👤 Name: {admin_name}\n"
+            "🆔 ID: {admin_id}\n"
+            "🔗 Username: {admin_username}\n\n"
+            "Please contact the admin for approval or support."
+        ),
         "price_list": "💰 Price List\n\n",
-        "payment_methods": "\n💳 Payment Methods:\n• Bkash\n• Nagad\n• Rocket\n• PayPal\n• Crypto\n\n📩 To purchase, please contact the admin.\nUse /admin to get contact details.",
+        "payment_methods": (
+            "\n💳 Payment Methods:\n"
+            "• Bkash\n• Nagad\n• Rocket\n• PayPal\n• Crypto\n\n"
+            "📩 To purchase, please contact the admin.\n"
+            "Use /admin to get contact details."
+        ),
         "admin_panel": "👑 Admin Panel\n\nSelect an option from the menu below:",
-        "user_management": "👥 User Management",
-        "price_management": "💰 Price Management",
-        "communication": "📢 Communication",
-        "system_management": "⚙️ System Management",
-        "statistics": "📊 Statistics",
-        "back": "🔙 Back",
         "approved_users": "✅ Approved Users",
-        "all_users": "👤 All Users",
-        "approve_user": "➕ Approve User",
-        "disapprove_user": "➖ Disapprove User",
-        "view_prices": "📋 View Price List",
-        "broadcast_all": "📢 Broadcast to All",
-        "broadcast_approved": "✅ Broadcast to Approved",
-        "sync_files": "🔄 Sync Files",
-        "export_data": "📦 Export Data",
-        "change_rate_limit": "⚙️ Change Rate Limit",
-        "bot_statistics": "📊 Bot Statistics\n\n👥 Total Users: {total_users}\n✅ Approved Users: {approved_users}\n⏳ Pending Users: {pending_users}\n🔗 Total Referrals: {total_referrals}\n🔢 Total Numbers Checked: {total_numbers_checked}\n\n📅 Last Updated: {last_updated}",
+        "all_users": "👤 All Users (Total: {total_users})",
+        "bot_statistics": (
+            "📊 Bot Statistics\n\n"
+            "👥 Total Users: {total_users}\n"
+            "✅ Approved Users: {approved_users}\n"
+            "⏳ Pending Users: {pending_users}\n"
+            "🔗 Total Referrals: {total_referrals}\n"
+            "🔢 Total Numbers Checked: {total_numbers_checked}\n\n"
+            "📅 Last Updated: {last_updated}"
+        ),
         "current_price_list": "💰 Current Price List\n\n",
-        "approve_user_msg": "➕ Approve User\n\nPlease send the user ID and duration in the format:\n/approve <user_id> <amount> <unit>\n\nExample: /approve 123456789 7 days\n\nAvailable units: hours, days, months",
-        "disapprove_user_msg": "➖ Disapprove User\n\nPlease send the user ID in the format:\n/disapprove <user_id>\n\nExample: /disapprove 123456789",
-        "broadcast_all_msg": "📢 Broadcast to All Users\n\nPlease send your message in the format:\n/broadcast <your message>\n\nExample: /broadcast Hello everyone! The bot will be under maintenance for 2 hours.",
-        "broadcast_approved_msg": "📢 Broadcast to Approved Users\n\nPlease send your message in the format:\n/broadcast_approved <your message>\n\nExample: /broadcast_approved New features have been added to the bot!",
         "unauthorized": "❌ You are not authorized to use this command.",
-        "usage_approve": "Usage: /approve <user_id> <amount> <unit>\nExample: /approve 123456789 7 days",
-        "usage_disapprove": "Usage: /disapprove <user_id>\nExample: /disapprove 123456789",
-        "usage_setratelimit": "Usage: /setratelimit <seconds>\nExample: /setratelimit 600 (for 10 minutes)",
-        "usage_broadcast": "Usage: /broadcast <your message>",
-        "usage_broadcast_approved": "Usage: /broadcast_approved <your message>",
+        "usage_approve": (
+            "Usage: /approve &lt;user_id&gt; &lt;amount&gt; &lt;unit&gt;\n"
+            "Example: /approve 123456789 7 days"
+        ),
+        "usage_disapprove": (
+            "Usage: /disapprove &lt;user_id&gt;\nExample: /disapprove 123456789"
+        ),
+        "usage_setratelimit": (
+            "Usage: /setratelimit &lt;seconds&gt;\n"
+            "Example: /setratelimit 600 (for 10 minutes)"
+        ),
+        "usage_broadcast": "Usage: /broadcast &lt;your message&gt;",
+        "usage_broadcast_approved": "Usage: /broadcast_approved &lt;your message&gt;",
         "invalid_unit": "❌ Invalid unit. Use 'hours', 'days', or 'months'.",
         "invalid_input": "❌ Invalid input. Please use the correct format: {format}",
         "cannot_disapprove_admin": "❌ You cannot disapprove the main admin.",
         "user_not_approved": "⚠️ User {uid} was not in the approved list.",
         "user_approved": "✅ User {uid} has been approved until {expiry_date}.",
         "user_disapproved": "✅ User {uid} has been disapproved.",
-        "rate_limit_updated": "✅ Rate limit updated to {seconds} seconds ({time_str}).",
-        "broadcast_complete": "✅ Broadcast complete.\n\n✅ Successful: {success_count}\n❌ Failed: {fail_count}",
-        "broadcast_approved_complete": "✅ Broadcast to approved users complete.\n\n✅ Successful: {success_count}\n❌ Failed: {fail_count}",
+        "rate_limit_updated": (
+            "✅ Rate limit updated to {seconds} seconds ({time_str})."
+        ),
+        "broadcast_complete": (
+            "✅ Broadcast complete.\n\n"
+            "✅ Successful: {success_count}\n"
+            "❌ Failed: {fail_count}"
+        ),
+        "broadcast_approved_complete": (
+            "✅ Broadcast to approved users complete.\n\n"
+            "✅ Successful: {success_count}\n"
+            "❌ Failed: {fail_count}"
+        ),
         "syncing": "🔄 Syncing data files...",
         "sync_success": "✅ All data files successfully synced.",
         "sync_failed": "❌ Failed to sync some data files. Please check the logs.",
@@ -138,561 +285,909 @@ LANGUAGES = {
         "no_users": "No users have interacted with the bot yet.",
         "invalid_user_id": "❌ Invalid User ID. Please provide a valid numerical ID.",
         "list_too_long": "The list was too long and has been sent as a file.",
-        "access_expired": "⏳ Your access has expired.\n\nPlease contact the admin to renew your subscription.\nUse /admin for contact details.",
-        "access_approved": "🎉 Congratulations! Your access has been approved.\n\nYou can use the bot until {expiry_date}.\n\nEnjoy the premium service!",
-        "access_revoked": "🚫 Your access has been revoked by the admin.\n\nPlease contact the admin for more details if you think this is a mistake.\nUse /admin for contact details.",
-        "referral_successful": "Referral successful! You now have {referral_count}/3 referrals.",
-        "referral_earned": "Congratulations! You've earned 2 hours of access through referrals!",
+        "access_expired": (
+            "⏳ Your access has expired.\n\n"
+            "Please contact the admin to renew your subscription.\n"
+            "Use /admin for contact details."
+        ),
+        "access_approved": (
+            "🎉 Congratulations! Your access has been approved.\n\n"
+            "You can use the bot until {expiry_date}.\n\nEnjoy the premium service!"
+        ),
+        "access_revoked": (
+            "🚫 Your access has been revoked by the admin.\n\n"
+            "Please contact the admin for more details if you think this is a mistake.\n"
+            "Use /admin for contact details."
+        ),
+        "referral_successful": (
+            "Referral successful! You now have {referral_count}/3 referrals."
+        ),
+        "referral_earned": (
+            "Congratulations! You've earned 2 hours of access through referrals!"
+        ),
         "already_used_bot": "You have already used the bot before.",
         "invalid_referral": "Invalid referral code.",
-        "select_option": "Please select an option from the menu below:",
-        "to_main_menu": "to Main Menu",
-        "to_price_management": "to Price Management",
-        "to_user_management": "to User Management",
-        "to_communication": "to Communication",
-        "to_system_management": "to System Management",
-        "new_referral_notification": "🎉 Good news! Someone joined using your referral link.\n\nYou now have {referral_count}/3 referrals.\n\nKeep sharing to earn free access!",
+        "new_referral_notification": (
+            "🎉 Good news! Someone joined using your referral link.\n\n"
+            "You now have {referral_count}/3 referrals.\n\n"
+            "Keep sharing to earn free access!"
+        ),
         "cleanup_expired": "🧹 Cleaning up expired users...",
         "cleanup_complete": "✅ Cleanup complete. Removed {count} expired users.",
-        "user_already_approved": "⚠️ User {uid} is already approved until {expiry_date}.",
-        "select_user": "Select a user to view details:",
-        "user_details": "👤 User Details\n\nID: {user_id}\nName: {first_name} {last_name}\nUsername: @{username}\nLanguage: {language}\nLast Interaction: {last_interaction}\nApproved: {approved}\nNumbers Checked: {numbers_checked}\n{expiry_info}",
-        "export_data_msg": "📦 Export Data\n\nYour bot data is being prepared for download.\n\nThis may take a moment if you have many users.",
+        "user_already_approved": (
+            "⚠️ User {uid} is already approved until {expiry_date}."
+        ),
+        "export_data_msg": (
+            "📦 Export Data\n\n"
+            "Your bot data is being prepared for download.\n\n"
+            "This may take a moment if you have many users."
+        ),
         "export_complete": "✅ Export complete. The data has been sent as a zip file.",
-        "select_user_to_approve": "Select a user to approve:",
-        "select_plan_for_user": "Select a plan for {user_name}:",
-        "page_info": "Page {current_page}/{total_pages}",
-        "no_pending_users": "There are no pending users to approve.",
-        "change_rate_limit_msg": "⚙️ Change Rate Limit\n\nCurrent rate limit: {current_limit} seconds ({current_time_str})\n\nPlease send the new rate limit in seconds using the command:\n/setratelimit <seconds>\n\nExample: /setratelimit 600 (for 10 minutes)"
     },
     "bn": {
-        "welcome": "👋 হ্যালো {first_name}!\n\nফেসবুক নম্বর চেকার বটে স্বাগতম।\n\nঅনুগ্রহ করে আপনার পছন্দের ভাষা নির্বাচন করুন:",
-        "language_selected": "✅ ভাষা বাংলায় সেট করা হয়েছে।\n\nএটি একটি প্রিমিয়াম সার্ভিস। আমাকে ফোন নম্বরের তালিকা পাঠান যাচাই করার জন্য।\n\n🔐 অ্যাক্সেস প্রয়োজন? /admin ব্যবহার করে সাপোর্টের সাথে যোগাযোগ করুন।",
+        "welcome": (
+            "👋 হ্যালো {first_name}!\n\n"
+            "ফেসবুক নম্বর চেকার বটে স্বাগতম।\n\n"
+            "অনুগ্রহ করে আপনার পছন্দের ভাষা নির্বাচন করুন:"
+        ),
+        "language_selected": (
+            "✅ ভাষা বাংলায় সেট করা হয়েছে।\n\n"
+            "এটি একটি প্রিমিয়াম সার্ভিস। আমাকে ফোন নম্বরের তালিকা পাঠান যাচাই করার জন্য।\n\n"
+            "🔐 অ্যাক্সেস প্রয়োজন? /admin ব্যবহার করে সাপোর্টের সাথে যোগাযোগ করুন।"
+        ),
         "example": "উদাহরণ:\n+8801712345678\n+8801812345678",
-        "access_denied": "🚫 অ্যাক্সেস প্রত্যাখ্যান করা হয়েছে!\n\nএটি শুধুমাত্র পেইড ইউজারদের জন্য একটি প্রিমিয়াম সার্ভিস। এটি হার সীমাবদ্ধতা এড়াতে একটি VPS এবং প্রিমিয়াম প্রক্সি ব্যবহার করে চলে।\n\nআপনার ইউজার ID: {uid}\n\nঅ্যাক্সেস পেতে অনুগ্রহ করে অ্যাডমিনের সাথে যোগাযোগ করুন।\nসাপোর্টের যোগাযোগের জন্য /admin ব্যবহার করুন।",
-        "buy_online": "অনলাইনে কিনুন (শীঘ্রই আসছে)",
+        "access_denied": (
+            "🚫 অ্যাক্সেস প্রত্যাখ্যান করা হয়েছে!\n\n"
+            "এটি শুধুমাত্র পেইড ইউজারদের জন্য একটি প্রিমিয়াম সার্ভিস। "
+            "এটি হার সীমাবদ্ধতা এড়াতে একটি VPS এবং প্রিমিয়াম প্রক্সি ব্যবহার করে চলে।\n\n"
+            "আপনার ইউজার ID: {uid}\n\n"
+            "অ্যাক্সেস পেতে অনুগ্রহ করে অ্যাডমিনের সাথে যোগাযোগ করুন।\n"
+            "সাপোর্টের যোগাযোগের জন্য /admin ব্যবহার করুন।"
+        ),
+        "buy_online": "অনলাইনে কিনুন",
         "refer_earn": "রেফার করুন এবং ফ্রি অ্যাক্সেস অর্জন করুন",
-        "buy_online_msg": "🛒 অনলাইনে কিনুন\n\nঅনলাইন পেমেন্ট অপশন শীঘ্রই আসছে!\n\nএখন, অ্যাক্সেস কেনার জন্য সরাসরি অ্যাডমিনের সাথে যোগাযোগ করুন।\nযোগাযোগের বিবরণের জন্য /admin ব্যবহার করুন।",
-        "refer_link": "🔗 আপনার রেফারেল লিঙ্ক\n\nআপনার বন্ধুদের সাথে এই লিঙ্কটি শেয়ার করুন:\n{referral_link}\n\nরেফারেল: {referral_count}/3\n",
+        "buy_online_msg": (
+            "🛒 অনলাইনে কিনুন\n\n"
+            "অনলাইন পেমেন্ট অপশন শীঘ্রই আসছে!\n\n"
+            "এখন, অ্যাক্সেস কেনার জন্য সরাসরি অ্যাডমিনের সাথে যোগাযোগ করুন।\n"
+            "যোগাযোগের বিবরণের জন্য /admin ব্যবহার করুন।"
+        ),
+        "select_payment_method": "💳 পেমেন্ট পদ্ধতি নির্বাচন করুন:",
+        "payment_binance": "Binance Pay",
+        "select_plan_binance": "Binance Pay দিয়ে পেমেন্ট করতে একটি প্ল্যান নির্বাচন করুন:",
+        "binance_invoice": (
+            "🧾 <b>Binance Pay ইনভয়েস</b>\n\n"
+            "প্ল্যান: <b>{duration}</b>\n"
+            "পরিমাণ: <b>{price_bdt} BDT</b> (≈ {price_usd} USD)\n\n"
+            "Binance Pay এর মাধ্যমে ঠিক <b>{price_usd} USD</b> এই Pay ID তে পাঠান:\n"
+            "<code>{pay_id}</code>\n\n"
+            "পেমেন্ট সম্পন্ন করার পর অ্যাডমিনকে (@{admin_username}) স্ক্রিনশট বা "
+            "ট্রানজ্যাকশন আইডি পাঠান এবং অনুমোদনের জন্য অপেক্ষা করুন।"
+        ),
+        "refer_link": (
+            "🔗 আপনার রেফারেল লিঙ্ক\n\n"
+            "আপনার বন্ধুদের সাথে এই লিঙ্কটি শেয়ার করুন:\n{referral_link}\n\n"
+            "রেফারেল: {referral_count}/3\n"
+        ),
         "refer_earned": "✅ আপনি রেফারেলের মাধ্যমে 2 ঘন্টার ফ্রি অ্যাক্সেস অর্জন করেছেন!\n",
-        "refer_needed": "❌ 2 ঘন্টার ফ্রি অ্যাক্সেস পেতে আপনার {remaining} আরও রেফারেল(স) প্রয়োজন।\n",
-        "referral_status": "🔗 আপনার রেফারেল স্ট্যাটাস\n\nআপনার রেফারেল কোড: {referral_code}\nআপনার রেফারেল লিঙ্ক:\n{referral_link}\n\nরেফারেল: {referral_count}/3\n",
+        "refer_needed": (
+            "❌ 2 ঘন্টার ফ্রি অ্যাক্সেস পেতে আপনার {remaining} আরও রেফারেল(স) প্রয়োজন।\n"
+        ),
+        "referral_status": (
+            "🔗 আপনার রেফারেল স্ট্যাটাস\n\n"
+            "আপনার রেফারেল কোড: {referral_code}\n"
+            "আপনার রেফারেল লিঙ্ক:\n{referral_link}\n\n"
+            "রেফারেল: {referral_count}/3\n"
+        ),
         "access_until": "✅ আপনার অ্যাক্সেস আছে পর্যন্ত: {expiry_date}\n",
         "permanent_access": "✅ আপনার স্থায়ী অ্যাক্সেস আছে।\n",
         "processing": "🚀 আপনার নম্বরগুলি প্রক্রিয়া করা হচ্ছে... অনুগ্রহ করে অপেক্ষা করুন।",
-        "no_numbers": "❌ আপনি কোনো বৈধ নম্বর পাঠাননি। অনুগ্রহ করে নম্বরগুলি পাঠান, এক লাইনে একটি করে।",
+        "no_numbers": (
+            "❌ আপনি কোনো বৈধ নম্বর পাঠাননি। অনুগ্রহ করে নম্বরগুলি পাঠান, এক লাইনে একটি করে।"
+        ),
         "check_complete": "--- ✅ যাচাই সম্পন্ন! ---\n\n",
         "found_numbers": "✅ পাওয়া নম্বর:\n",
         "not_found_numbers": "❌ পাওয়া যায়নি এমন নম্বর:\n",
         "errors_unknown": "⚠️ ত্রুটি/অজানা:\n",
         "no_valid_numbers": "কোনো নম্বর প্রক্রিয়া করা যায়নি। অনুগ্রহ করে ফরম্যাট চেক করুন।",
-        "rate_limit": "⏳ রেট লিমিট অতিক্রান্ত!\n\nআপনি প্রতি {time_limit} শুধুমাত্র একবার রিকোয়েস্ট করতে পারেন।\n\nআবার চেষ্টা করার আগে অনুগ্রহ করে {remaining_time} অপেক্ষা করুন।",
-        "admin_contact": "👑 অ্যাডমিন যোগাযোগ তথ্য\n\n👤 নাম: {admin_name}\n🆔 ID: {admin_id}\n🔗 ইউজারনেম: {admin_username}\n\nঅনুমোদন বা সাপোর্টের জন্য অ্যাডমিনের সাথে যোগাযোগ করুন।",
+        "rate_limit": (
+            "⏳ রেট লিমিট অতিক্রান্ত!\n\n"
+            "আপনি প্রতি {time_limit} শুধুমাত্র একবার রিকোয়েস্ট করতে পারেন।\n\n"
+            "আবার চেষ্টা করার আগে অনুগ্রহ করে {remaining_time} অপেক্ষা করুন।"
+        ),
+        "admin_contact": (
+            "👑 অ্যাডমিন যোগাযোগ তথ্য\n\n"
+            "👤 নাম: {admin_name}\n"
+            "🆔 ID: {admin_id}\n"
+            "🔗 ইউজারনেম: {admin_username}\n\n"
+            "অনুমোদন বা সাপোর্টের জন্য অ্যাডমিনের সাথে যোগাযোগ করুন।"
+        ),
         "price_list": "💰 মূল্য তালিকা\n\n",
-        "payment_methods": "\n💳 পেমেন্ট পদ্ধতি:\n• বিকাশ\n• নগদ\n• রকেট\n• পেপাল\n• ক্রিপ্টো\n\n📩 কেনার জন্য, অনুগ্রহ করে অ্যাডমিনের সাথে যোগাযোগ করুন।\nযোগাযোগের বিবরণের জন্য /admin ব্যবহার করুন।",
+        "payment_methods": (
+            "\n💳 পেমেন্ট পদ্ধতি:\n"
+            "• বিকাশ\n• নগদ\n• রকেট\n• পেপাল\n• ক্রিপ্টো\n\n"
+            "📩 কেনার জন্য, অনুগ্রহ করে অ্যাডমিনের সাথে যোগাযোগ করুন।\n"
+            "যোগাযোগের বিবরণের জন্য /admin ব্যবহার করুন।"
+        ),
         "admin_panel": "👑 অ্যাডমিন প্যানেল\n\nনিচের মেনু থেকে একটি অপশন নির্বাচন করুন:",
-        "user_management": "👥 ইউজার ম্যানেজমেন্ট",
-        "price_management": "💰 মূল্য ম্যানেজমেন্ট",
-        "communication": "📢 যোগাযোগ",
-        "system_management": "⚙️ সিস্টেম ম্যানেজমেন্ট",
-        "statistics": "📊 পরিসংখ্যান",
-        "back": "🔙 ফিরে যান",
         "approved_users": "✅ অনুমোদিত ইউজার",
-        "all_users": "👤 সমস্ত ইউজার",
-        "approve_user": "➕ ইউজার অনুমোদন করুন",
-        "disapprove_user": "➖ ইউজার অনুমোদন বাতিল করুন",
-        "view_prices": "📋 মূল্য তালিকা দেখুন",
-        "broadcast_all": "📢 সবার কাছে প্রচার করুন",
-        "broadcast_approved": "✅ অনুমোদিত ইউজারদের কাছে প্রচার করুন",
-        "sync_files": "🔄 ফাইল সিঙ্ক",
-        "export_data": "📦 ডেটা এক্সপোর্ট করুন",
-        "change_rate_limit": "⚙️ রেট লিমিট পরিবর্তন করুন",
-        "bot_statistics": "📊 বট পরিসংখ্যান\n\n👥 মোট ইউজার: {total_users}\n✅ অনুমোদিত ইউজার: {approved_users}\n⏳ অপেক্ষমাণ ইউজার: {pending_users}\n🔗 মোট রেফারেল: {total_referrals}\n🔢 মোট নম্বর চেক করা হয়েছে: {total_numbers_checked}\n\n📅 সর্বশেষ আপডেট: {last_updated}",
+        "all_users": "👤 সমস্ত ইউজার (মোট: {total_users})",
+        "bot_statistics": (
+            "📊 বট পরিসংখ্যান\n\n"
+            "👥 মোট ইউজার: {total_users}\n"
+            "✅ অনুমোদিত ইউজার: {approved_users}\n"
+            "⏳ অপেক্ষমাণ ইউজার: {pending_users}\n"
+            "🔗 মোট রেফারেল: {total_referrals}\n"
+            "🔢 মোট নম্বর চেক করা হয়েছে: {total_numbers_checked}\n\n"
+            "📅 সর্বশেষ আপডেট: {last_updated}"
+        ),
         "current_price_list": "💰 বর্তমান মূল্য তালিকা\n\n",
-        "approve_user_msg": "➕ ইউজার অনুমোদন করুন\n\nঅনুগ্রহ করে ইউজার ID এবং সময়কাল পাঠান ফরম্যাটে:\n/approve <user_id> <amount> <unit>\n\nউদাহরণ: /approve 123456789 7 days\n\nউপলব্ধ ইউনিট: hours, days, months",
-        "disapprove_user_msg": "➖ ইউজার অনুমোদন বাতিল করুন\n\nঅনুগ্রহ করে ইউজার ID পাঠান ফরম্যাটে:\n/disapprove <user_id>\n\nউদাহরণ: /disapprove 123456789",
-        "broadcast_all_msg": "📢 সমস্ত ইউজারদের কাছে প্রচার করুন\n\nঅনুগ্রহ করে আপনার বার্তা পাঠান ফরম্যাটে:\n/broadcast <আপনার বার্তা>\n\nউদাহরণ: /broadcast সবাইকে হ্যালো! বটটি 2 ঘন্টার জন্য রক্ষণাবেক্ষণে থাকবে।",
-        "broadcast_approved_msg": "📢 অনুমোদিত ইউজারদের কাছে প্রচার করুন\n\nঅনুগ্রহ করে আপনার বার্তা পাঠান ফরম্যাটে:\n/broadcast_approved <আপনার বার্তা>\n\nউদাহরণ: /broadcast_approved বটে নতুন বৈশিষ্ট্য যোগ করা হয়েছে!",
         "unauthorized": "❌ আপনি এই কমান্ড ব্যবহার করার অনুমতি পাননি।",
-        "usage_approve": "ব্যবহার: /approve <user_id> <amount> <unit>\nউদাহরণ: /approve 123456789 7 days",
-        "usage_disapprove": "ব্যবহার: /disapprove <user_id>\nউদাহরণ: /disapprove 123456789",
-        "usage_setratelimit": "ব্যবহার: /setratelimit <seconds>\nউদাহরণ: /setratelimit 600 (10 মিনিটের জন্য)",
-        "usage_broadcast": "ব্যবহার: /broadcast <আপনার বার্তা>",
-        "usage_broadcast_approved": "ব্যবহার: /broadcast_approved <আপনার বার্তা>",
+        "usage_approve": (
+            "ব্যবহার: /approve &lt;user_id&gt; &lt;amount&gt; &lt;unit&gt;\n"
+            "উদাহরণ: /approve 123456789 7 days"
+        ),
+        "usage_disapprove": (
+            "ব্যবহার: /disapprove &lt;user_id&gt;\nউদাহরণ: /disapprove 123456789"
+        ),
+        "usage_setratelimit": (
+            "ব্যবহার: /setratelimit &lt;seconds&gt;\nউদাহরণ: /setratelimit 600 (10 মিনিটের জন্য)"
+        ),
+        "usage_broadcast": "ব্যবহার: /broadcast &lt;আপনার বার্তা&gt;",
+        "usage_broadcast_approved": (
+            "ব্যবহার: /broadcast_approved &lt;আপনার বার্তা&gt;"
+        ),
         "invalid_unit": "❌ অবৈধ ইউনিট। 'hours', 'days', বা 'months' ব্যবহার করুন।",
-        "invalid_input": "❌ অবৈধ ইনপুট। অনুগ্রহ করে সঠিক ফরম্যাট ব্যবহার করুন: {format}",
+        "invalid_input": (
+            "❌ অবৈধ ইনপুট। অনুগ্রহ করে সঠিক ফরম্যাট ব্যবহার করুন: {format}"
+        ),
         "cannot_disapprove_admin": "❌ আপনি প্রধান অ্যাডমিনকে অনুমোদন বাতিল করতে পারবেন না।",
         "user_not_approved": "⚠️ ইউজার {uid} অনুমোদিত তালিকায় ছিল না।",
         "user_approved": "✅ ইউজার {uid} কে {expiry_date} পর্যন্ত অনুমোদন করা হয়েছে।",
         "user_disapproved": "✅ ইউজার {uid} এর অনুমোদন বাতিল করা হয়েছে।",
-        "rate_limit_updated": "✅ রেট লিমিট {seconds} সেকেন্ডে ({time_str}) আপডেট করা হয়েছে।",
-        "broadcast_complete": "✅ প্রচার সম্পন্ন।\n\n✅ সফল: {success_count}\n❌ ব্যর্থ: {fail_count}",
-        "broadcast_approved_complete": "✅ অনুমোদিত ইউজারদের কাছে প্রচার সম্পন্ন।\n\n✅ সফল: {success_count}\n❌ ব্যর্থ: {fail_count}",
+        "rate_limit_updated": (
+            "✅ রেট লিমিট {seconds} সেকেন্ডে ({time_str}) আপডেট করা হয়েছে।"
+        ),
+        "broadcast_complete": (
+            "✅ প্রচার সম্পন্ন।\n\n"
+            "✅ সফল: {success_count}\n❌ ব্যর্থ: {fail_count}"
+        ),
+        "broadcast_approved_complete": (
+            "✅ অনুমোদিত ইউজারদের কাছে প্রচার সম্পন্ন।\n\n"
+            "✅ সফল: {success_count}\n❌ ব্যর্থ: {fail_count}"
+        ),
         "syncing": "🔄 ডেটা ফাইল সিঙ্ক করা হচ্ছে...",
         "sync_success": "✅ সমস্ত ডেটা ফাইল সফলভাবে সিঙ্ক করা হয়েছে।",
-        "sync_failed": "❌ কিছু ডেটা ফাইল সিঙ্ক করতে ব্যর্থ হয়েছে। অনুগ্রহ করে লগ চেক করুন।",
+        "sync_failed": (
+            "❌ কিছু ডেটা ফাইল সিঙ্ক করতে ব্যর্থ হয়েছে। অনুগ্রহ করে লগ চেক করুন।"
+        ),
         "no_approved_users": "কোনো অনুমোদিত ইউজার নেই।",
         "no_users": "এখনো কোনো ইউজার বটের সাথে ইন্টারঅ্যাক্ট করেনি।",
         "invalid_user_id": "❌ অবৈধ ইউজার ID। অনুগ্রহ করে একটি বৈধ সংখ্যাসূচক ID প্রদান করুন।",
-        "list_too_long": "The list was too long and has been sent as a file.",
-        "access_expired": "⏳ Your access has expired.\n\nPlease contact the admin to renew your subscription.\nUse /admin for contact details.",
-        "access_approved": "🎉 Congratulations! Your access has been approved.\n\nYou can use the bot until {expiry_date}.\n\nEnjoy the premium service!",
-        "access_revoked": "🚫 Your access has been revoked by the admin.\n\nPlease contact the admin for more details if you think this is a mistake.\nUse /admin for contact details.",
-        "referral_successful": "Referral successful! You now have {referral_count}/3 referrals.",
-        "referral_earned": "Congratulations! You've earned 2 hours of access through referrals!",
-        "already_used_bot": "You have already used the bot before.",
-        "invalid_referral": "Invalid referral code.",
-        "select_option": "Please select an option from the menu below:",
-        "to_main_menu": "to Main Menu",
-        "to_price_management": "to Price Management",
-        "to_user_management": "to User Management",
-        "to_communication": "to Communication",
-        "to_system_management": "to System Management",
-        "new_referral_notification": "🎉 সুসংবাদ! কেউ আপনার রেফারেল লিঙ্ক ব্যবহার করে যোগ দিয়েছে।\n\nআপনার এখন {referral_count}/3 রেফারেল আছে।\n\nফ্রি অ্যাক্সেস পেতে শেয়ার করা চালিয়ে যান!",
+        "list_too_long": "তালিকাটি অনেক বড় ছিল এবং এটি ফাইল হিসেবে পাঠানো হয়েছে।",
+        "access_expired": (
+            "⏳ আপনার অ্যাক্সেসের মেয়াদ শেষ হয়ে গেছে।\n\n"
+            "সাবস্ক্রিপশন নবায়নের জন্য অনুগ্রহ করে অ্যাডমিনের সাথে যোগাযোগ করুন।\n"
+            "যোগাযোগের জন্য /admin ব্যবহার করুন।"
+        ),
+        "access_approved": (
+            "🎉 অভিনন্দন! আপনার অ্যাক্সেস অনুমোদিত হয়েছে।\n\n"
+            "আপনি {expiry_date} পর্যন্ত বট ব্যবহার করতে পারবেন।\n\n"
+            "প্রিমিয়াম সার্ভিস উপভোগ করুন!"
+        ),
+        "access_revoked": (
+            "🚫 আপনার অ্যাক্সেস অ্যাডমিন দ্বারা বাতিল করা হয়েছে।\n\n"
+            "আপনি যদি মনে করেন এটি ভুলবশত হয়েছে, তাহলে বিস্তারিত জানতে অ্যাডমিনের সাথে যোগাযোগ করুন।\n"
+            "যোগাযোগের জন্য /admin ব্যবহার করুন।"
+        ),
+        "referral_successful": (
+            "রেফারেল সফল! এখন আপনার {referral_count}/3 টি রেফারেল হয়েছে।"
+        ),
+        "referral_earned": (
+            "অভিনন্দন! আপনি রেফারেলের মাধ্যমে 2 ঘন্টার অ্যাক্সেস অর্জন করেছেন!"
+        ),
+        "already_used_bot": "আপনি ইতোমধ্যে এই বট ব্যবহার করেছেন।",
+        "invalid_referral": "অবৈধ রেফারেল কোড।",
+        "new_referral_notification": (
+            "🎉 সুসংবাদ! কেউ আপনার রেফারেল লিঙ্ক ব্যবহার করে যোগ দিয়েছে।\n\n"
+            "এখন আপনার {referral_count}/3 টি রেফারেল আছে।\n\n"
+            "ফ্রি অ্যাক্সেস পেতে শেয়ার করা চালিয়ে যান!"
+        ),
         "cleanup_expired": "🧹 মেয়াদোত্তীর্ণ ইউজারদের পরিষ্কার করা হচ্ছে...",
-        "cleanup_complete": "✅ পরিষ্কার সম্পন্ন। {count} জন মেয়াদোত্তীর্ণ ইউজার মুছে ফেলা হয়েছে।",
-        "user_already_approved": "⚠️ ইউজার {uid} ইতিমধ্যে {expiry_date} পর্যন্ত অনুমোদিত।",
-        "select_user": "একজন ইউজার নির্বাচন করুন বিস্তারিত দেখতে:",
-        "user_details": "👤 ইউজার বিস্তারিত\n\nID: {user_id}\nনাম: {first_name} {last_name}\nইউজারনেম: @{username}\nভাষা: {language}\nশেষ ইন্টারঅ্যাকশন: {last_interaction}\nঅনুমোদিত: {approved}\nনম্বর চেক করা হয়েছে: {numbers_checked}\n{expiry_info}",
-        "export_data_msg": "📦 ডেটা এক্সপোর্ট করুন\n\nআপনার বট ডেটা ডাউনলোডের জন্য প্রস্তুত করা হচ্ছে।\n\nআপনার যদি অনেক ইউজার থাকে তবে এটি কিছুক্ষণ সময় নিতে পারে।",
+        "cleanup_complete": (
+            "✅ পরিষ্কার সম্পন্ন। {count} জন মেয়াদোত্তীর্ণ ইউজার মুছে ফেলা হয়েছে।"
+        ),
+        "user_already_approved": (
+            "⚠️ ইউজার {uid} ইতিমধ্যে {expiry_date} পর্যন্ত অনুমোদিত।"
+        ),
+        "export_data_msg": (
+            "📦 ডেটা এক্সপোর্ট\n\n"
+            "আপনার বট ডেটা ডাউনলোডের জন্য প্রস্তুত করা হচ্ছে।\n\n"
+            "অনেক ইউজার থাকলে এতে কিছুটা সময় লাগতে পারে।"
+        ),
         "export_complete": "✅ এক্সপোর্ট সম্পন্ন। ডেটা একটি জিপ ফাইল হিসেবে পাঠানো হয়েছে।",
-        "select_user_to_approve": "অনুমোদনের জন্য একজন ইউজার নির্বাচন করুন:",
-        "select_plan_for_user": "{user_name} এর জন্য একটি প্ল্যান নির্বাচন করুন:",
-        "page_info": "পৃষ্ঠা {current_page}/{total_pages}",
-        "no_pending_users": "অনুমোদনের জন্য কোনো অপেক্ষমাণ ইউজার নেই।",
-        "change_rate_limit_msg": "⚙️ রেট লিমিট পরিবর্তন করুন\n\nবর্তমান রেট লিমিট: {current_limit} সেকেন্ড ({current_time_str})\n\nঅনুগ্রহ করে কমান্ড ব্যবহার করে নতুন রেট লিমিট সেকেন্ডে পাঠান:\n/setratelimit <seconds>\n\nউদাহরণ: /setratelimit 600 (10 মিনিটের জন্য)"
-    }
+    },
 }
 
-# --- DATA FOR FACEBOOK API ---
-url = 'https://www.facebook.com/ajax/login/help/identify.php?ctx=recover'
-headers = {
-    'accept': '*/*',
-    'accept-language': 'en-GB,en;q=0.9,en-US;q=0.8',
-    'content-type': 'application/x-www-form-urlencoded',
-    'origin': 'https://www.facebook.com',
-    'priority': 'u=1, i',
-    'referer': 'https://www.facebook.com/login/identify/?ctx=recover&from_login_screen=0',
-    'sec-fetch-dest': 'empty',
-    'sec-fetch-mode': 'cors',
-    'sec-fetch-site': 'same-origin',
-    'user-agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1 Edg/141.0.0.0',
-    'x-asbd-id': '359341',
-    'x-fb-lsd': 'AdE3czGo7uw'
+# --- FACEBOOK CHECKER HTTP DATA ---
+
+FB_URL = "https://www.facebook.com/ajax/login/help/identify.php?ctx=recover"
+FB_HEADERS = {
+    "accept": "*/*",
+    "accept-language": "en-GB,en;q=0.9,en-US;q=0.8",
+    "content-type": "application/x-www-form-urlencoded",
+    "origin": "https://www.facebook.com",
+    "referer": "https://www.facebook.com/login/identify/?ctx=recover&from_login_screen=0",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin",
+    "user-agent": (
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) "
+        "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 "
+        "Safari/604.1 Edg/141.0.0.0"
+    ),
+    "x-asbd-id": "359341",
+    "x-fb-lsd": "AdE3czGo7uw",
 }
-cookies = {
-    'datr': '5BfuaP5MJ81CQGWO4JTj_FQA',
-    'wd': '980x2125'
+FB_COOKIES = {
+    "datr": "5BfuaP5MJ81CQGWO4JTj_FQA",
+    "wd": "980x2125",
 }
-base_data = {
-    'jazoest': '2979',
-    'lsd': 'AdE3czGo7uw',
-    'email': 'number',
-    'did_submit': '1',
-    '__user': '0',
-    '__a': '1',
-    '__req': '7',
-    '__hs': '20375.BP%3ADEFAULT.2.0...0',
-    'dpr': '1',
-    '__ccg': 'EXCELLENT',
-    '__rev': '1028355510',
-    '__s': 'uwimyp%3Awq8ee5%3Af3twai',
-    '__hsi': '7561007094168113829',
-    '__dyn': '7xeUmwkHg7ebwKBAg5S1Dxu13wqovzEdEc8uxa0CEbo1nEhw2nVE4W0qa0FE2awt81s8hwGwQw4iwBgao6C0Mo2swaO4U2zxe3C0D85a1qw8Xxm16wa-0raazo11E2ZwrU6C0hq1Iw6PG2O1TwmU3ywo81V8',
-    '__hsdp': 'gOMT1Cx0jK93aiyib89DxiZCmvzosxR1B04ywjofV4ciw5Ew',
-    '__hblp': '0Ww9W11wd20CU0xK0hS0aCw5Gw3fo0wO05Mo0Ei01pfw4Rw4ayrG3m0lK0B829wt83oUhw2sE0sdw',
-    '__spin_r': '1028355510',
-    '__spin_b': 'trunk',
-    '__spin_t': '1760434148'
+FB_BASE_DATA = {
+    "jazoest": "2979",
+    "lsd": "AdE3czGo7uw",
+    "email": "number",
+    "did_submit": "1",
+    "__user": "0",
+    "__a": "1",
+    "__req": "7",
+    "__hs": "20375.BP%3ADEFAULT.2.0...0",
+    "dpr": "1",
+    "__rev": "1028355510",
 }
 
-# --- LOCAL FILE FUNCTIONS (REFACTORED WITH AIOFILES) ---
+# ---------------------------------------------------------------------------
+# LOCAL FILE FUNCTIONS
+# ---------------------------------------------------------------------------
 
-async def load_config_from_file():
-    """Load config from local file asynchronously."""
+
+async def load_json(path: str, default):
+    if not os.path.exists(path):
+        return default
+    try:
+        async with aiofiles.open(path, "r", encoding="utf-8") as f:
+            content = await f.read()
+            return json.loads(content)
+    except Exception as e:
+        logger.error("Error loading JSON from %s: %s", path, e)
+        return default
+
+
+async def save_json(path: str, data) -> bool:
+    try:
+        async with aiofiles.open(path, "w", encoding="utf-8") as f:
+            await f.write(json.dumps(data, indent=2, ensure_ascii=False))
+        return True
+    except Exception as e:
+        logger.error("Error saving JSON to %s: %s", path, e)
+        return False
+
+
+async def load_config_from_file() -> None:
     global config_data
-    try:
-        if os.path.exists(CONFIG_FILE):
-            async with aiofiles.open(CONFIG_FILE, 'r') as f:
-                content = await f.read()
-                config_data = json.loads(content)
-            logger.info("Successfully loaded config from file")
-        else:
-            # Create the file if it doesn't exist
-            await save_config_to_file()
-    except Exception as e:
-        logger.error(f"Error loading config from file: {e}")
+    cfg = await load_json(CONFIG_FILE, {})
+    if cfg:
+        config_data.update(cfg)
 
-async def save_config_to_file():
-    """Save config to local file asynchronously."""
-    try:
-        async with aiofiles.open(CONFIG_FILE, 'w') as f:
-            await f.write(json.dumps(config_data, indent=2))
-        logger.info("Successfully saved config to file")
-        return True
-    except Exception as e:
-        logger.error(f"Error saving config to file: {e}")
+
+async def save_config_to_file() -> bool:
+    ok = await save_json(CONFIG_FILE, config_data)
+    if not ok:
         return False
+    try:
+        await save_config_to_db()
+    except Exception as e:
+        logger.error("Error saving config to MySQL: %s", e)
+    return True
 
-async def load_users_from_file():
-    """Load approved users from local file asynchronously."""
+
+async def load_users_from_file() -> None:
     global approved_users
-    try:
-        if os.path.exists(USER_DATA_FILE):
-            async with aiofiles.open(USER_DATA_FILE, 'r') as f:
-                content = await f.read()
-                loaded_users = json.loads(content)
-
-            temp_approved_users = {}
-            for user_id_str, expiry_date in loaded_users.items():
-                try:
-                    user_id = int(user_id_str)
-                    if expiry_date is not None:
-                        temp_approved_users[user_id] = datetime.fromisoformat(expiry_date)
-                    else:
-                        temp_approved_users[user_id] = None
-                except (ValueError, TypeError) as e:
-                    logger.error(f"Error converting user ID {user_id_str}: {e}")
-
-            temp_approved_users[ADMIN_ID] = None
-            approved_users = temp_approved_users
-            logger.info(f"Successfully loaded {len(approved_users)} users from file")
+    data = await load_json(USER_DATA_FILE, {})
+    temp: dict[int, datetime | None] = {}
+    for user_id_str, expiry in data.items():
+        try:
+            uid = int(user_id_str)
+        except ValueError:
+            continue
+        if expiry is None:
+            temp[uid] = None
         else:
-            approved_users = {ADMIN_ID: None}
-            await save_users_to_file()
+            try:
+                temp[uid] = datetime.fromisoformat(expiry)
+            except ValueError:
+                temp[uid] = None
+    temp[ADMIN_ID] = None
+    approved_users = temp
 
+
+async def save_users_to_file() -> bool:
+    data: dict[str, str | None] = {}
+    for uid, expiry in approved_users.items():
+        data[str(uid)] = expiry.isoformat() if expiry else None
+    ok = await save_json(USER_DATA_FILE, data)
+    if not ok:
+        return False
+    try:
+        await save_users_to_db()
     except Exception as e:
-        logger.error(f"Error loading users from file: {e}")
-        approved_users = {ADMIN_ID: None}
+        logger.error("Error saving users to MySQL: %s", e)
+    return True
 
-async def load_all_users_from_file():
-    """Load all users from local file asynchronously."""
+
+async def load_all_users_from_file() -> None:
     global all_users
-    try:
-        if os.path.exists(ALL_USERS_FILE):
-            async with aiofiles.open(ALL_USERS_FILE, 'r') as f:
-                content = await f.read()
-                all_users = json.loads(content)
-            logger.info(f"Successfully loaded {len(all_users)} all users from file")
-        else:
-            all_users = {}
-            await save_all_users_to_file()
-    except Exception as e:
-        logger.error(f"Error loading all users from file: {e}")
-        all_users = {}
+    all_users = await load_json(ALL_USERS_FILE, {})
 
-async def load_referral_data_from_file():
-    """Load referral data from local file asynchronously."""
+
+async def save_all_users_to_file() -> bool:
+    ok = await save_json(ALL_USERS_FILE, all_users)
+    if not ok:
+        return False
+    try:
+        await save_all_users_to_db()
+    except Exception as e:
+        logger.error("Error saving all_users to MySQL: %s", e)
+    return True
+
+
+async def load_referral_data_from_file() -> None:
     global referral_data
-    try:
-        if os.path.exists(REFERRAL_DATA_FILE):
-            async with aiofiles.open(REFERRAL_DATA_FILE, 'r') as f:
-                content = await f.read()
-                referral_data = json.loads(content)
-            logger.info("Successfully loaded referral data from file")
-        else:
-            referral_data = {}
-            await save_referral_data_to_file()
-    except Exception as e:
-        logger.error(f"Error loading referral data from file: {e}")
-        referral_data = {}
+    referral_data = await load_json(REFERRAL_DATA_FILE, {})
 
-async def load_price_list_from_file():
-    """Load price list from local file asynchronously."""
+
+async def save_referral_data_to_file() -> bool:
+    ok = await save_json(REFERRAL_DATA_FILE, referral_data)
+    if not ok:
+        return False
+    try:
+        await save_referral_data_to_db()
+    except Exception as e:
+        logger.error("Error saving referral_data to MySQL: %s", e)
+    return True
+
+
+async def load_price_list_from_file() -> None:
     global price_list
-    try:
-        if os.path.exists(PRICE_LIST_FILE):
-            async with aiofiles.open(PRICE_LIST_FILE, 'r') as f:
-                content = await f.read()
-                price_list = json.loads(content)
-            logger.info("Successfully loaded price list from file")
-        else:
-            await save_price_list_to_file()
-    except Exception as e:
-        logger.error(f"Error loading price list from file: {e}")
+    data = await load_json(PRICE_LIST_FILE, {})
+    if data:
+        price_list.update(data)
 
-async def load_user_settings_from_file():
-    """Load user settings from local file asynchronously."""
+
+async def save_price_list_to_file() -> bool:
+    return await save_json(PRICE_LIST_FILE, price_list)
+
+
+async def load_user_settings_from_file() -> None:
     global user_settings
-    try:
-        if os.path.exists(USER_SETTINGS_FILE):
-            async with aiofiles.open(USER_SETTINGS_FILE, 'r') as f:
-                content = await f.read()
-                user_settings = json.loads(content)
-            logger.info("Successfully loaded user settings from file")
-        else:
-            user_settings = {}
-            await save_user_settings_to_file()
-    except Exception as e:
-        logger.error(f"Error loading user settings from file: {e}")
-        user_settings = {}
+    user_settings = await load_json(USER_SETTINGS_FILE, {})
 
-async def save_users_to_file():
-    """Save approved users to local file asynchronously."""
-    try:
-        users_to_save = {}
-        for user_id, expiry_date in approved_users.items():
-            if expiry_date is None:
-                users_to_save[str(user_id)] = None
-            else:
-                users_to_save[str(user_id)] = expiry_date.isoformat()
 
-        async with aiofiles.open(USER_DATA_FILE, 'w') as f:
-            await f.write(json.dumps(users_to_save, indent=2))
-
-        logger.info(f"Successfully saved {len(approved_users)} users to file")
-        return True
-    except Exception as e:
-        logger.error(f"Error saving users to file: {e}")
+async def save_user_settings_to_file() -> bool:
+    ok = await save_json(USER_SETTINGS_FILE, user_settings)
+    if not ok:
         return False
-
-async def save_all_users_to_file():
-    """Save all users to local file asynchronously."""
     try:
-        async with aiofiles.open(ALL_USERS_FILE, 'w') as f:
-            await f.write(json.dumps(all_users, indent=2))
-        logger.info("Successfully saved all users to file")
-        return True
+        await save_user_settings_to_db()
     except Exception as e:
-        logger.error(f"Error saving all users to file: {e}")
-        return False
+        logger.error("Error saving user_settings to MySQL: %s", e)
+    return True
 
-async def save_referral_data_to_file():
-    """Save referral data to local file asynchronously."""
-    try:
-        async with aiofiles.open(REFERRAL_DATA_FILE, 'w') as f:
-            await f.write(json.dumps(referral_data, indent=2))
-        logger.info("Successfully saved referral data to file")
-        return True
-    except Exception as e:
-        logger.error(f"Error saving referral data to file: {e}")
-        return False
 
-async def save_price_list_to_file():
-    """Save price list to local file asynchronously."""
-    try:
-        async with aiofiles.open(PRICE_LIST_FILE, 'w') as f:
-            await f.write(json.dumps(price_list, indent=2))
-        logger.info("Successfully saved price list to file")
-        return True
-    except Exception as e:
-        logger.error(f"Error saving price list to file: {e}")
-        return False
-
-async def save_user_settings_to_file():
-    """Save user settings to local file asynchronously."""
-    try:
-        async with aiofiles.open(USER_SETTINGS_FILE, 'w') as f:
-            await f.write(json.dumps(user_settings, indent=2))
-        logger.info("Successfully saved user settings to file")
-        return True
-    except Exception as e:
-        logger.error(f"Error saving user settings to file: {e}")
-        return False
-
-async def save_user_details_to_file(user_id, user_data):
-    """Save specific user details to local file asynchronously."""
+async def save_user_details_to_file(user_id: int, user_data: dict) -> bool:
     try:
         users_dir = os.path.join(DATA_DIR, "users")
-        if not os.path.exists(users_dir):
-            os.makedirs(users_dir)
-
+        os.makedirs(users_dir, exist_ok=True)
         filename = os.path.join(users_dir, f"{user_id}.json")
-        async with aiofiles.open(filename, 'w') as f:
-            await f.write(json.dumps(user_data, indent=2))
-
-        logger.info(f"Successfully saved user {user_id} details to file")
+        async with aiofiles.open(filename, "w", encoding="utf-8") as f:
+            await f.write(json.dumps(user_data, indent=2, ensure_ascii=False))
         return True
     except Exception as e:
-        logger.error(f"Error saving user {user_id} details to file: {e}")
+        logger.error("Error saving user %s details to file: %s", user_id, e)
         return False
 
-# --- LANGUAGE FUNCTIONS ---
+# ---------------------------------------------------------------------------
+# MYSQL HELPERS
+# ---------------------------------------------------------------------------
 
-def get_user_language(user_id):
-    """Get the user's preferred language."""
+
+async def get_db_connection(db: str | None = None):
+    try:
+        conn = await aiomysql.connect(
+            host=MYSQL_HOST,
+            port=MYSQL_PORT,
+            user=MYSQL_USER,
+            password=MYSQL_PASSWORD,
+            db=db,
+            autocommit=True,
+        )
+        return conn
+    except Exception as e:
+        logger.error("Failed to connect to MySQL (db=%s): %s", db, e)
+        return None
+
+
+async def ensure_database() -> bool:
+    conn = await get_db_connection(db=None)
+    if conn is None:
+        return False
+    try:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                f"CREATE DATABASE IF NOT EXISTS `{MYSQL_DB}` "
+                "CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+            )
+        return True
+    except Exception as e:
+        logger.error("Failed to create database '%s': %s", MYSQL_DB, e)
+        return False
+    finally:
+        conn.close()
+
+
+async def init_db() -> None:
+    if not await ensure_database():
+        return
+    conn = await get_db_connection(db=MYSQL_DB)
+    if conn is None:
+        return
+
+    create_table_queries = [
+        """
+        CREATE TABLE IF NOT EXISTS approved_users (
+            user_id BIGINT PRIMARY KEY,
+            expiry_datetime DATETIME NULL
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS all_users (
+            user_id BIGINT PRIMARY KEY,
+            first_name VARCHAR(255),
+            last_name VARCHAR(255),
+            username VARCHAR(255),
+            last_interaction DATETIME,
+            numbers_checked INT DEFAULT 0
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS referral_data (
+            user_id BIGINT PRIMARY KEY,
+            referral_code VARCHAR(64),
+            referred_by BIGINT NULL,
+            referred_users_json TEXT
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS user_settings (
+            user_id BIGINT PRIMARY KEY,
+            language VARCHAR(8)
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS config (
+            config_key VARCHAR(64) PRIMARY KEY,
+            config_value TEXT
+        )
+        """,
+    ]
+
+    try:
+        async with conn.cursor() as cur:
+            for q in create_table_queries:
+                try:
+                    await cur.execute(q)
+                except Exception as e:
+                    logger.error("Error creating table: %s", e)
+    finally:
+        conn.close()
+
+
+async def save_users_to_db() -> None:
+    conn = await get_db_connection(db=MYSQL_DB)
+    if conn is None:
+        return
+    try:
+        async with conn.cursor() as cur:
+            await cur.execute("DELETE FROM approved_users")
+            for uid, expiry in approved_users.items():
+                expiry_str = (
+                    expiry.strftime("%Y-%m-%d %H:%M:%S") if expiry is not None else None
+                )
+                await cur.execute(
+                    "REPLACE INTO approved_users (user_id, expiry_datetime) "
+                    "VALUES (%s, %s)",
+                    (int(uid), expiry_str),
+                )
+    except Exception as e:
+        logger.error("Error saving approved_users to MySQL: %s", e)
+    finally:
+        conn.close()
+
+
+async def save_all_users_to_db() -> None:
+    conn = await get_db_connection(db=MYSQL_DB)
+    if conn is None:
+        return
+    try:
+        async with conn.cursor() as cur:
+            await cur.execute("DELETE FROM all_users")
+            for user_id_str, data in all_users.items():
+                uid = int(user_id_str)
+                first_name = data.get("first_name")
+                last_name = data.get("last_name")
+                username = data.get("username")
+                last_interaction = data.get("last_interaction")
+                numbers_checked = data.get("numbers_checked", 0)
+                await cur.execute(
+                    """
+                    REPLACE INTO all_users (
+                        user_id, first_name, last_name, username,
+                        last_interaction, numbers_checked
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        uid,
+                        first_name,
+                        last_name,
+                        username,
+                        last_interaction,
+                        numbers_checked,
+                    ),
+                )
+    except Exception as e:
+        logger.error("Error saving all_users to MySQL: %s", e)
+    finally:
+        conn.close()
+
+
+async def save_referral_data_to_db() -> None:
+    conn = await get_db_connection(db=MYSQL_DB)
+    if conn is None:
+        return
+    try:
+        async with conn.cursor() as cur:
+            await cur.execute("DELETE FROM referral_data")
+            for user_id_str, data in referral_data.items():
+                uid = int(user_id_str)
+                referral_code = data.get("referral_code")
+                referred_by = data.get("referred_by")
+                referred_users = data.get("referred_users", [])
+                referred_users_json = json.dumps(referred_users)
+                await cur.execute(
+                    """
+                    REPLACE INTO referral_data (
+                        user_id, referral_code, referred_by, referred_users_json
+                    )
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (
+                        uid,
+                        referral_code,
+                        int(referred_by) if referred_by else None,
+                        referred_users_json,
+                    ),
+                )
+    except Exception as e:
+        logger.error("Error saving referral_data to MySQL: %s", e)
+    finally:
+        conn.close()
+
+
+async def save_user_settings_to_db() -> None:
+    conn = await get_db_connection(db=MYSQL_DB)
+    if conn is None:
+        return
+    try:
+        async with conn.cursor() as cur:
+            await cur.execute("DELETE FROM user_settings")
+            for user_id_str, data in user_settings.items():
+                uid = int(user_id_str)
+                language = data.get("language")
+                await cur.execute(
+                    """
+                    REPLACE INTO user_settings (user_id, language)
+                    VALUES (%s, %s)
+                    """,
+                    (uid, language),
+                )
+    except Exception as e:
+        logger.error("Error saving user_settings to MySQL: %s", e)
+    finally:
+        conn.close()
+
+
+async def save_config_to_db() -> None:
+    conn = await get_db_connection(db=MYSQL_DB)
+    if conn is None:
+        return
+    try:
+        async with conn.cursor() as cur:
+            await cur.execute("DELETE FROM config")
+            for key, value in config_data.items():
+                await cur.execute(
+                    """
+                    REPLACE INTO config (config_key, config_value)
+                    VALUES (%s, %s)
+                    """,
+                    (key, json.dumps(value)),
+                )
+    except Exception as e:
+        logger.error("Error saving config to MySQL: %s", e)
+    finally:
+        conn.close()
+
+
+async def save_user_to_db(user_id: int, user_data: dict) -> None:
+    conn = await get_db_connection(db=MYSQL_DB)
+    if conn is None:
+        return
+    try:
+        async with conn.cursor() as cur:
+            first_name = user_data.get("first_name")
+            last_name = user_data.get("last_name")
+            username = user_data.get("username")
+            last_interaction = user_data.get("last_interaction")
+            numbers_checked = user_data.get("numbers_checked", 0)
+            await cur.execute(
+                """
+                REPLACE INTO all_users (
+                    user_id, first_name, last_name, username,
+                    last_interaction, numbers_checked
+                )
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    int(user_id),
+                    first_name,
+                    last_name,
+                    username,
+                    last_interaction,
+                    numbers_checked,
+                ),
+            )
+            language = user_data.get("language")
+            if language:
+                await cur.execute(
+                    """
+                    REPLACE INTO user_settings (user_id, language)
+                    VALUES (%s, %s)
+                    """,
+                    (int(user_id), language),
+                )
+    except Exception as e:
+        logger.error("Error saving single user %s to MySQL: %s", user_id, e)
+    finally:
+        conn.close()
+
+# ---------------------------------------------------------------------------
+# LANGUAGE HELPERS
+# ---------------------------------------------------------------------------
+
+
+def get_user_language(user_id: int) -> str:
     user_id_str = str(user_id)
     if user_id_str in user_settings:
         return user_settings[user_id_str].get("language", "en")
     return "en"
 
-async def set_user_language(user_id, language):
-    """Set the user's preferred language."""
-    user_id_str = str(user_id)
-    if user_id_str not in user_settings:
-        user_settings[user_id_str] = {}
 
+async def set_user_language(user_id: int, language: str) -> None:
+    user_id_str = str(user_id)
+    user_settings.setdefault(user_id_str, {})
     user_settings[user_id_str]["language"] = language
     await save_user_settings_to_file()
 
-def get_text(user_id, key, **kwargs):
-    """Get localized text based on user's language preference."""
+
+async def change_language(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Command: /lang – reopen language selection inline keyboard."""
+    user = update.effective_user
+    await track_user(user, update)
+
+    keyboard = [
+        [
+            InlineKeyboardButton("🇺🇸 English", callback_data="set_language_en"),
+            InlineKeyboardButton("🇧🇩 বাংলা", callback_data="set_language_bn"),
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_html(
+        get_text(user.id, "welcome", first_name=user.first_name),
+        reply_markup=reply_markup,
+    )
+
+
+def get_text(user_id: int, key: str, **kwargs) -> str:
     language = get_user_language(user_id)
     text = LANGUAGES.get(language, LANGUAGES["en"]).get(key, "")
-
     if kwargs:
         try:
             text = text.format(**kwargs)
         except (KeyError, ValueError) as e:
-            logger.error(f"Error formatting text: {e}")
-
+            logger.error("Error formatting text for key '%s': %s", key, e)
     return text
 
-# --- REFERRAL FUNCTIONS ---
+# ---------------------------------------------------------------------------
+# REFERRAL HELPERS
+# ---------------------------------------------------------------------------
 
-def generate_referral_code(length=8):
-    """Generate a random referral code."""
-    return ''.join(random.choices(string.ascii_letters + string.digits, k=length))
 
-async def get_or_create_referral_code(user_id):
-    """Get existing referral code or create a new one for the user."""
+def generate_referral_code(length: int = 8) -> str:
+    return "".join(random.choices(string.ascii_letters + string.digits, k=length))
+
+
+async def get_or_create_referral_code(user_id: int) -> str:
     user_id_str = str(user_id)
     if user_id_str not in referral_data:
         referral_data[user_id_str] = {
             "referral_code": generate_referral_code(),
             "referred_by": None,
-            "referred_users": []
+            "referred_users": [],
         }
         await save_referral_data_to_file()
-
     return referral_data[user_id_str]["referral_code"]
 
-async def process_referral(referrer_id, referred_id, context: ContextTypes.DEFAULT_TYPE):
-    """Process a referral and update referral data."""
+
+async def process_referral(
+    referrer_id: int, referred_id: int, context: ContextTypes.DEFAULT_TYPE
+) -> tuple[bool, str]:
     referrer_id_str = str(referrer_id)
     referred_id_str = str(referred_id)
 
-    # Check if the referred user already exists
     if referred_id_str in referral_data:
         return False, get_text(referred_id, "already_used_bot")
 
-    # Check if the referrer exists
     if referrer_id_str not in referral_data:
         return False, get_text(referred_id, "invalid_referral")
 
-    # Create referral data for the new user
     referral_data[referred_id_str] = {
         "referral_code": generate_referral_code(),
         "referred_by": referrer_id_str,
-        "referred_users": []
+        "referred_users": [],
     }
 
-    # Add the new user to the referrer's referred users list
-    if referrer_id_str in referral_data:
-        if "referred_users" not in referral_data[referrer_id_str]:
-            referral_data[referrer_id_str]["referred_users"] = []
+    if "referred_users" not in referral_data[referrer_id_str]:
+        referral_data[referrer_id_str]["referred_users"] = []
+    if referred_id_str not in referral_data[referrer_id_str]["referred_users"]:
+        referral_data[referrer_id_str]["referred_users"].append(referred_id_str)
 
-        # Check if this user is already in the referred list
-        if referred_id_str not in referral_data[referrer_id_str]["referred_users"]:
-            referral_data[referrer_id_str]["referred_users"].append(referred_id_str)
-
-    # Save the updated referral data
     await save_referral_data_to_file()
 
-    # Get the updated referral count
     referral_count = len(referral_data[referrer_id_str]["referred_users"])
 
-    # Send notification to the referrer about the new referral
     await send_user_notification(
         context,
-        int(referrer_id_str),
-        get_text(referrer_id, "new_referral_notification", referral_count=referral_count)
+        referrer_id,
+        get_text(referrer_id, "new_referral_notification", referral_count=referral_count),
     )
 
-    # Check if the referrer has reached the required number of referrals
     if referral_count >= 3:
-        # Grant access to the referrer
         expiry_date = datetime.now(timezone.utc) + timedelta(hours=2)
-        approved_users[int(referrer_id_str)] = expiry_date
-        await save_users_to_file()
+        approved_users[referrer_id] = expiry_date
 
-        # Send notification to the referrer about earning access
+        # Store referral bonus plan info (2 hours free) for this user
+        ref_user_id_str = str(referrer_id)
+        user_rec = all_users.setdefault(ref_user_id_str, {})
+        user_rec["plan_duration"] = "2 hours (referral bonus)"
+        user_rec["plan_price_bdt"] = 0
+        user_rec["plan_price_usd"] = 0.0
+        await save_all_users_to_file()
+
+        await save_users_to_file()
         await send_user_notification(
             context,
-            int(referrer_id_str),
-            get_text(referrer_id, "referral_earned")
+            referrer_id,
+            get_text(referrer_id, "referral_earned"),
         )
 
-        return True, get_text(referred_id, "referral_successful", referral_count=referral_count)
+    return True, get_text(
+        referred_id, "referral_successful", referral_count=referral_count
+    )
 
-    # Return success with the updated referral count for the referred user
-    return True, get_text(referred_id, "referral_successful", referral_count=referral_count)
 
-async def track_user(user, update: Update = None):
-    """Track all users who interact with the bot."""
+async def track_user(user, update: Update | None = None) -> None:
     user_id = str(user.id)
-
     if user_id not in all_users:
         all_users[user_id] = {
             "first_name": user.first_name,
             "last_name": user.last_name,
             "username": user.username,
             "last_interaction": datetime.now().isoformat(),
-            "numbers_checked": 0  # Initialize number counter
+            "numbers_checked": 0,
         }
-        await save_all_users_to_file()
     else:
         all_users[user_id]["last_interaction"] = datetime.now().isoformat()
-        await save_all_users_to_file()
+    await save_all_users_to_file()
 
-# --- HELPER FUNCTIONS ---
+# ---------------------------------------------------------------------------
+# HELPER FUNCTIONS
+# ---------------------------------------------------------------------------
 
-# --- REFACTORED with httpx ---
-async def check_facebook_number(client: httpx.AsyncClient, phone_number: str):
-    """Checks a specific phone number asynchronously and returns its status."""
-    data = base_data.copy()
-    data['email'] = phone_number
+
+async def check_facebook_number(client: httpx.AsyncClient, phone_number: str) -> str:
+    """Check a phone number against Facebook and return status string."""
+    data = FB_BASE_DATA.copy()
+    data["email"] = phone_number
 
     try:
-        response = await client.post(url, headers=headers, cookies=cookies, data=data)
+        response = await client.post(
+            FB_URL, headers=FB_HEADERS, cookies=FB_COOKIES, data=data, timeout=20
+        )
         response.raise_for_status()
 
-        response_text = response.text
-        if response_text.startswith('for (;;);'):
-            json_string = response_text[9:]
+        text = response.text
+        if text.startswith("for (;;);"):
+            json_string = text[9:]
             data_json = json.loads(json_string)
         else:
-            data_json = json.loads(response_text)
+            data_json = json.loads(text)
 
-        if 'jsmods' in data_json and 'require' in data_json['jsmods']:
-            for requirement in data_json['jsmods']['require']:
-                if isinstance(requirement, list) and len(requirement) > 0 and requirement[0] == 'ServerRedirect':
+        if "jsmods" in data_json and "require" in data_json["jsmods"]:
+            for requirement in data_json["jsmods"]["require"]:
+                if (
+                    isinstance(requirement, list)
+                    and len(requirement) > 0
+                    and requirement[0] == "ServerRedirect"
+                ):
                     return "Found"
 
-        if 'domops' in data_json:
-            for op in data_json['domops']:
-                if isinstance(op, list) and len(op) > 3 and isinstance(op[3], dict) and '__html' in op[3]:
-                    html_content = op[3]['__html']
-                    if 'No search results' in html_content:
+        if "domops" in data_json:
+            for op in data_json["domops"]:
+                if (
+                    isinstance(op, list)
+                    and len(op) > 3
+                    and isinstance(op[3], dict)
+                    and "__html" in op[3]
+                ):
+                    html_content = op[3]["__html"]
+                    if "No search results" in html_content:
                         return "Not Found"
 
         return "Unknown Response (Possible CAPTCHA or Page Change)"
 
     except httpx.RequestError as e:
-        logger.warning(f"httpx RequestError for {phone_number}: {e}")
+        logger.warning("httpx RequestError for %s: %s", phone_number, e)
         return f"Error: {e}"
     except json.JSONDecodeError:
-        logger.warning(f"json.JSONDecodeError for {phone_number}: (Possibly Blocked)")
+        logger.warning("json.JSONDecodeError for %s: Possibly blocked", phone_number)
         return "Error: Invalid JSON (Possibly Blocked)"
     except Exception as e:
-        logger.error(f"Unexpected error in check_facebook_number for {phone_number}: {e}")
+        logger.error(
+            "Unexpected error in check_facebook_number for %s: %s", phone_number, e
+        )
         return f"Error: {e}"
 
-async def send_user_notification(context: ContextTypes.DEFAULT_TYPE, user_id: int, text: str):
-    """Sends a notification to a user and handles potential errors."""
-    try:
-        await context.bot.send_message(chat_id=user_id, text=text, parse_mode='HTML')
-    except Exception as e:
-        # আরও ভালো এরর হ্যান্ডলিং
-        if "Chat not found" in str(e):
-            logger.warning(f"Could not send notification to user {user_id}: User has not interacted with the bot or has blocked it")
-        elif "Forbidden: bot was blocked by the user" in str(e):
-            logger.warning(f"Could not send notification to user {user_id}: User has blocked the bot")
-        else:
-            logger.error(f"Could not send notification to user {user_id}: {e}")
 
-def is_user_approved(user_id: int, context: ContextTypes.DEFAULT_TYPE):
-    """Checks if a user is approved and if their access has expired."""
+async def send_user_notification(
+    context: ContextTypes.DEFAULT_TYPE, user_id: int, text: str
+) -> None:
+    """Send a notification to a user, ignoring common Telegram errors."""
+    try:
+        await context.bot.send_message(chat_id=user_id, text=text, parse_mode="HTML")
+    except Exception as e:
+        msg = str(e)
+        if "chat not found" in msg.lower():
+            logger.debug(
+                "Notification skipped for user %s: chat not found / not started", user_id
+            )
+        elif "bot was blocked by the user" in msg.lower():
+            logger.debug("Notification skipped for user %s: bot blocked", user_id)
+        else:
+            logger.error("Could not send notification to user %s: %s", user_id, e)
+
+
+def is_user_approved(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
     if user_id == ADMIN_ID:
         return True
 
@@ -705,1132 +1200,422 @@ def is_user_approved(user_id: int, context: ContextTypes.DEFAULT_TYPE):
 
     if datetime.now(timezone.utc) > expiry_date:
         del approved_users[user_id]
-        logger.info(f"User {user_id}'s access has expired.")
-        asyncio.create_task(send_user_notification(
-            context,
-            user_id,
-            get_text(user_id, "access_expired")
-        ))
+        logger.info("User %s access expired", user_id)
+        asyncio.create_task(
+            send_user_notification(
+                context, user_id, get_text(user_id, "access_expired")
+            )
+        )
         asyncio.create_task(save_users_to_file())
         return False
 
     return True
 
-# --- RATE LIMIT FUNCTION ---
 
-def check_rate_limit(user_id: int):
-    """Check if user is rate limited."""
+def check_rate_limit(user_id: int) -> tuple[bool, str | None]:
     current_time = datetime.now(timezone.utc)
-    rate_limit_seconds = config_data.get("rate_limit_seconds", DEFAULT_RATE_LIMIT_SECONDS)
-    
-    # Check if user has made a request before
+    rate_limit_seconds = config_data.get(
+        "rate_limit_seconds", DEFAULT_RATE_LIMIT_SECONDS
+    )
+
     if user_id in user_last_request:
         last_request_time = user_last_request[user_id]
-        time_diff = (current_time - last_request_time).total_seconds()
-        
-        # If less than RATE_LIMIT_SECONDS have passed, user is rate limited
-        if time_diff < rate_limit_seconds:
-            remaining_time = rate_limit_seconds - int(time_diff)
-            minutes = remaining_time // 60
-            seconds = remaining_time % 60
-            
+        diff = (current_time - last_request_time).total_seconds()
+        if diff < rate_limit_seconds:
+            remaining = int(rate_limit_seconds - diff)
+            minutes = remaining // 60
+            seconds = remaining % 60
             if minutes > 0:
-                time_str = f"{minutes} minute{'s' if minutes > 1 else ''} and {seconds} second{'s' if seconds != 1 else ''}"
+                time_str = (
+                    f"{minutes} minute{'s' if minutes > 1 else ''} and "
+                    f"{seconds} second{'s' if seconds != 1 else ''}"
+                )
             else:
                 time_str = f"{seconds} second{'s' if seconds != 1 else ''}"
-            
             return False, time_str
-    
-    # Update the last request time
+
     user_last_request[user_id] = current_time
     return True, None
 
-# --- CLEANUP FUNCTION ---
 
-async def cleanup_expired_users():
-    """Remove expired users from the approved_users list."""
+async def cleanup_expired_users() -> int:
     global approved_users
-    current_time = datetime.now(timezone.utc)
-    expired_users = []
-    
-    # Create a list of expired users to avoid modifying the dictionary while iterating
-    for user_id, expiry_date in list(approved_users.items()):
-        if user_id != ADMIN_ID and expiry_date is not None and current_time > expiry_date:
-            expired_users.append(user_id)
-    
-    # Remove expired users
-    for user_id in expired_users:
-        del approved_users[user_id]
-        logger.info(f"Removed expired user {user_id}")
-    
-    # Save the updated list
-    if expired_users:
-        await save_users_to_file()
-    
-    return len(expired_users)
+    now = datetime.now(timezone.utc)
+    expired = [
+        uid
+        for uid, expiry in list(approved_users.items())
+        if uid != ADMIN_ID and expiry is not None and now > expiry
+    ]
+    if not expired:
+        return 0
+    for uid in expired:
+        approved_users.pop(uid, None)
+        logger.info("Removed expired user %s", uid)
+    await save_users_to_file()
+    return len(expired)
 
-async def auto_cleanup_task(context: ContextTypes.DEFAULT_TYPE):
-    """Periodically clean up expired users."""
+
+async def ensure_daily_reset() -> None:
+    """Reset numbers_checked for all users once per day."""
+    today = datetime.now(timezone.utc).date().isoformat()
+    last_reset = config_data.get("last_reset_date")
+    if last_reset == today:
+        return
+
+    for data in all_users.values():
+        if isinstance(data, dict):
+            data["numbers_checked"] = 0
+
+    config_data["last_reset_date"] = today
+    await save_all_users_to_file()
+    await save_config_to_file()
+    logger.info("Daily reset of numbers_checked completed")
+
+
+async def auto_cleanup_task(context: ContextTypes.DEFAULT_TYPE) -> None:
     while True:
         try:
-            removed_count = await cleanup_expired_users()
-            if removed_count > 0:
-                logger.info(f"Auto cleanup removed {removed_count} expired users")
-            await asyncio.sleep(AUTO_CLEANUP_INTERVAL)
+            removed = await cleanup_expired_users()
+            if removed > 0:
+                logger.info("Auto cleanup removed %d users", removed)
         except Exception as e:
-            logger.error(f"Error in auto cleanup task: {e}")
-            await asyncio.sleep(AUTO_CLEANUP_INTERVAL)
+            logger.error("Error in auto cleanup task: %s", e)
+        await asyncio.sleep(AUTO_CLEANUP_INTERVAL)
 
-# --- EXPORT DATA FUNCTION ---
 
-async def export_bot_data():
-    """Export all bot data as a zip file."""
+def fetch_gmail_payments_sync() -> list[dict]:
+    """
+    Blocking helper to fetch payment events from Gmail via IMAP.
+
+    Expected format somewhere in the subject or body:
+      TGID: &lt;telegram_user_id&gt;
+      PLAN: &lt;amount&gt; &lt;unit&gt;
+
+    Example:
+      TGID: 123456789
+      PLAN: 7 days
+    """
+    events: list[dict] = []
+
+    if not GMAIL_USERNAME or not GMAIL_PASSWORD:
+        return events
+
     try:
-        # Create a BytesIO object to store the zip file in memory
+        mail = imaplib.IMAP4_SSL(GMAIL_IMAP_HOST, GMAIL_IMAP_PORT)
+        mail.login(GMAIL_USERNAME, GMAIL_PASSWORD)
+        mail.select("INBOX")
+
+        typ, data = mail.search(None, "UNSEEN")
+        if typ != "OK":
+            logger.error("Gmail IMAP search failed: %s", typ)
+            mail.close()
+            mail.logout()
+            return events
+
+        for num in data[0].split():
+            typ, msg_data = mail.fetch(num, "(RFC822)")
+            if typ != "OK" or not msg_data:
+                continue
+
+            raw_email = msg_data[0][1]
+            msg = email.message_from_bytes(raw_email)
+
+            raw_subject = msg.get("Subject", "")
+            try:
+                subject = str(make_header(decode_header(raw_subject)))
+            except Exception:
+                subject = raw_subject
+
+            body = ""
+            if msg.is_multipart():
+                for part in msg.walk():
+                    ctype = part.get_content_type()
+                    cdispo = str(part.get("Content-Disposition", ""))
+                    if ctype == "text/plain" and "attachment" not in cdispo:
+                        charset = part.get_content_charset() or "utf-8"
+                        try:
+                            body = part.get_payload(decode=True).decode(
+                                charset, errors="ignore"
+                            )
+                        except Exception:
+                            body = part.get_payload(decode=True).decode(
+                                "utf-8", errors="ignore"
+                            )
+                        break
+            else:
+                charset = msg.get_content_charset() or "utf-8"
+                try:
+                    body = msg.get_payload(decode=True).decode(
+                        charset, errors="ignore"
+                    )
+                except Exception:
+                    body = msg.get_payload(decode=True).decode(
+                        "utf-8", errors="ignore"
+                    )
+
+            text = subject + "\n" + body
+
+            tgid_match = re.search(r"TGID[:=]\s*(\d+)", text, re.IGNORECASE)
+            plan_match = re.search(
+                r"PLAN[:=]\s*(\d+)\s*(hour|hours|day|days|month|months)",
+                text,
+                re.IGNORECASE,
+            )
+
+            if tgid_match and plan_match:
+                user_id = int(tgid_match.group(1))
+                amount = int(plan_match.group(1))
+                unit = plan_match.group(2)
+                events.append(
+                    {
+                        "user_id": user_id,
+                        "amount": amount,
+                        "unit": unit,
+                        "subject": subject,
+                    }
+                )
+                # Mark processed so we do not handle again
+                try:
+                    mail.store(num, "+FLAGS", "\\Seen")
+                except Exception:
+                    pass
+            else:
+                # Mark as seen so we do not repeatedly parse irrelevant emails
+                try:
+                    mail.store(num, "+FLAGS", "\\Seen")
+                except Exception:
+                    pass
+
+        mail.close()
+        mail.logout()
+    except Exception as e:
+        logger.error("Error while checking Gmail for payments: %s", e)
+
+    return events
+
+
+async def process_auto_payment(
+    context: ContextTypes.DEFAULT_TYPE,
+    user_id_to_approve: int,
+    amount: int,
+    unit: str,
+    subject: str,
+) -> None:
+    """
+    Apply a paid plan to a user based on Gmail-detected payment.
+    Behaves similarly to /approve but without needing an Update.
+    """
+    try:
+        now = datetime.now(timezone.utc)
+        base_time = now
+        current_expiry = approved_users.get(user_id_to_approve)
+        if current_expiry is not None and current_expiry > now:
+            base_time = current_expiry
+
+        unit_l = unit.lower()
+
+        if unit_l.startswith("hour"):
+            expiry_date = base_time + timedelta(hours=amount)
+        elif unit_l.startswith("day"):
+            expiry_date = base_time + timedelta(days=amount)
+        elif unit_l.startswith("month"):
+            expiry_date = base_time + timedelta(days=amount * 30)
+        else:
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=(
+                    f"⚠️ Gmail payment detected for user {user_id_to_approve}, "
+                    f"but unit '{unit}' is not recognized. Subject: {subject}"
+                ),
+            )
+            return
+
+        # Derive and store plan info (duration and price, if from price_list)
+        plan_duration = f"{amount} {unit_l}"
+        plan_price_bdt = None
+        plan_price_usd = None
+
+        if unit_l.startswith("day"):
+            for value in price_list.values():
+                try:
+                    num_str, unit_str = value["duration"].split()[:2]
+                    num_days = int(num_str)
+                except Exception:
+                    continue
+                if num_days == amount and unit_str.lower().startswith("day"):
+                    plan_duration = value["duration"]
+                    plan_price_bdt = value.get("price_bdt")
+                    plan_price_usd = value.get("price_usd")
+                    break
+
+        user_id_str = str(user_id_to_approve)
+        user_rec = all_users.setdefault(user_id_str, {})
+        user_rec.setdefault("first_name", "")
+        user_rec.setdefault("last_name", "")
+        user_rec.setdefault("username", "")
+        user_rec["last_interaction"] = datetime.now().isoformat()
+        user_rec["plan_duration"] = plan_duration
+        if plan_price_bdt is not None:
+            user_rec["plan_price_bdt"] = plan_price_bdt
+        if plan_price_usd is not None:
+            user_rec["plan_price_usd"] = plan_price_usd
+
+        approved_users[user_id_to_approve] = expiry_date
+
+        await save_all_users_to_file()
+        await save_users_to_file()
+
+        expiry_str = expiry_date.strftime("%Y-%m-%d %H:%M:%S UTC")
+
+        # Notify admin
+        try:
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=(
+                    f"✅ Auto-approved user {user_id_to_approve} from Gmail payment.\n"
+                    f"Subject: {subject}\n"
+                    f"Plan: {plan_duration}\n"
+                    f"Expires: {expiry_str}"
+                ),
+            )
+        except Exception as e:
+            logger.error(
+                "Failed to notify admin about Gmail auto-approval for %s: %s",
+                user_id_to_approve,
+                e,
+            )
+
+        # Notify user (if possible)
+        try:
+            await send_user_notification(
+                context,
+                user_id_to_approve,
+                get_text(
+                    user_id_to_approve,
+                    "access_approved",
+                    expiry_date=expiry_str,
+                ),
+            )
+        except Exception as e:
+            logger.error(
+                "Failed to notify user %s after Gmail auto-approval: %s",
+                user_id_to_approve,
+                e,
+            )
+    except Exception as e:
+        logger.error(
+            "Error while auto-approving user %s from Gmail payment: %s",
+            user_id_to_approve,
+            e,
+        )
+
+
+async def check_gmail_for_payments(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Periodic job: check Gmail inbox for payment emails and auto-approve users.
+    """
+    events = await asyncio.get_running_loop().run_in_executor(
+        None, fetch_gmail_payments_sync
+    )
+    if not events:
+        return
+
+    for event in events:
+        await process_auto_payment(
+            context,
+            event["user_id"],
+            event["amount"],
+            event["unit"],
+            event["subject"],
+        )
+
+
+async def gmail_payment_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    await check_gmail_for_payments(context)
+
+
+async def export_bot_data() -> io.BytesIO | None:
+    try:
         zip_buffer = io.BytesIO()
-        
-        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-            # Add approved users data
-            users_to_save = {}
-            for user_id, expiry_date in approved_users.items():
-                if expiry_date is None:
-                    users_to_save[str(user_id)] = None
-                else:
-                    users_to_save[str(user_id)] = expiry_date.isoformat()
-            
-            zip_file.writestr("approved_users.json", json.dumps(users_to_save, indent=2))
-            
-            # Add all users data
-            zip_file.writestr("all_users.json", json.dumps(all_users, indent=2))
-            
-            # Add referral data
-            zip_file.writestr("referral_data.json", json.dumps(referral_data, indent=2))
-            
-            # Add price list
-            zip_file.writestr("price_list.json", json.dumps(price_list, indent=2))
-            
-            # Add user settings
-            zip_file.writestr("user_settings.json", json.dumps(user_settings, indent=2))
-            
-            # Add config
-            zip_file.writestr("config.json", json.dumps(config_data, indent=2))
-            
-            # Add individual user files if they exist
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            users_to_save = {
+                str(uid): (expiry.isoformat() if expiry else None)
+                for uid, expiry in approved_users.items()
+            }
+            zf.writestr("approved_users.json", json.dumps(users_to_save, indent=2))
+            zf.writestr("all_users.json", json.dumps(all_users, indent=2))
+            zf.writestr("referral_data.json", json.dumps(referral_data, indent=2))
+            zf.writestr("price_list.json", json.dumps(price_list, indent=2))
+            zf.writestr("user_settings.json", json.dumps(user_settings, indent=2))
+            zf.writestr("config.json", json.dumps(config_data, indent=2))
+
             users_dir = os.path.join(DATA_DIR, "users")
             if os.path.exists(users_dir):
                 for filename in os.listdir(users_dir):
                     if filename.endswith(".json"):
-                        file_path = os.path.join(users_dir, filename)
-                        # REFACTORED: Use async read for consistency (though sync is fine here)
-                        async with aiofiles.open(file_path, 'r') as f:
-                            zip_file.writestr(f"users/{filename}", await f.read())
-            
-            # Add a summary file
-            total_numbers_checked = sum(user.get("numbers_checked", 0) for user in all_users.values())
+                        path = os.path.join(users_dir, filename)
+                        async with aiofiles.open(path, "r", encoding="utf-8") as f:
+                            zf.writestr(f"users/{filename}", await f.read())
+
+            total_numbers_checked = sum(
+                user.get("numbers_checked", 0) for user in all_users.values()
+            )
             summary = {
                 "export_date": datetime.now().isoformat(),
                 "total_users": len(all_users),
-                "approved_users": len(approved_users) - 1,  # Exclude admin
-                "total_referrals": sum(len(data.get("referred_users", [])) for data in referral_data.values()),
+                "approved_users": max(len(approved_users) - 1, 0),
+                "total_referrals": sum(
+                    len(data.get("referred_users", []))
+                    for data in referral_data.values()
+                ),
                 "total_numbers_checked": total_numbers_checked,
                 "price_list": price_list,
-                "config": config_data
+                "config": config_data,
             }
-            zip_file.writestr("summary.json", json.dumps(summary, indent=2))
-        
-        # Reset buffer position to the beginning
+            zf.writestr("summary.json", json.dumps(summary, indent=2))
+
         zip_buffer.seek(0)
-        
         return zip_buffer
-        
     except Exception as e:
-        logger.error(f"Error exporting bot data: {e}")
+        logger.error("Error exporting bot data: %s", e)
         return None
 
-# --- SAFE MESSAGE EDITING ---
 
-async def safe_edit_message(query, text, reply_markup=None, parse_mode=None):
-    """Safely edit a message, handling potential errors."""
-    try:
-        await query.edit_message_text(
-            text=text,
-            reply_markup=reply_markup,
-            parse_mode=parse_mode
-        )
-        return True
-    except BadRequest as e:
-        if "message is not modified" in str(e):
-            return True
-        elif "message to edit not found" in str(e):
-            try:
-                await query.message.reply_text(
-                    text=text,
-                    reply_markup=reply_markup,
-                    parse_mode=parse_mode
-                )
-                return True
-            except Exception as e2:
-                logger.error(f"Failed to send new message: {e2}")
-                return False
-        else:
-            logger.error(f"Error editing message: {e}")
-            return False
-    except Exception as e:
-        logger.error(f"Unexpected error editing message: {e}")
-        return False
+def remove_html_tags(text: str) -> str:
+    clean_re = re.compile("<.*?>")
+    return re.sub(clean_re, "", text)
 
-# --- ADMIN PANEL FUNCTIONS ---
+# ---------------------------------------------------------------------------
+# TELEGRAM HANDLERS
+# ---------------------------------------------------------------------------
 
-async def admin_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Display the main admin menu with inline buttons."""
-    query = update.callback_query if update.callback_query else None
 
-    if query:
-        user_id = query.from_user.id
-        await query.answer()
-    else:
-        user_id = update.effective_user.id
-
-    if user_id != ADMIN_ID:
-        if query:
-            await safe_edit_message(query, get_text(user_id, "unauthorized"))
-        else:
-            await update.message.reply_text(get_text(user_id, "unauthorized"))
-        return
-
-    keyboard = [
-        [
-            InlineKeyboardButton(get_text(user_id, "user_management"), callback_data="admin_user_management"),
-            InlineKeyboardButton(get_text(user_id, "price_management"), callback_data="admin_price_management")
-        ],
-        [
-            InlineKeyboardButton(get_text(user_id, "communication"), callback_data="admin_communication"),
-            InlineKeyboardButton(get_text(user_id, "system_management"), callback_data="admin_system")
-        ],
-        [
-            InlineKeyboardButton(get_text(user_id, "statistics"), callback_data="admin_statistics"),
-            InlineKeyboardButton(get_text(user_id, "back"), callback_data="admin_back")
-        ]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    if query:
-        await safe_edit_message(
-            query,
-            get_text(user_id, "admin_panel"),
-            reply_markup=reply_markup
-        )
-    else:
-        await update.message.reply_html(
-            get_text(user_id, "admin_panel"),
-            reply_markup=reply_markup
-        )
-
-async def admin_user_management_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Display the user management menu."""
-    query = update.callback_query
-    await query.answer()
-
-    if query.from_user.id != ADMIN_ID:
-        await safe_edit_message(query, get_text(query.from_user.id, "unauthorized"))
-        return
-
-    keyboard = [
-        [
-            InlineKeyboardButton(get_text(query.from_user.id, "approved_users"), callback_data="admin_approved_users"),
-            InlineKeyboardButton(get_text(query.from_user.id, "all_users"), callback_data="admin_all_users")
-        ],
-        [
-            InlineKeyboardButton(get_text(query.from_user.id, "approve_user"), callback_data="admin_approve_user_paginated"),
-            InlineKeyboardButton(get_text(query.from_user.id, "disapprove_user"), callback_data="admin_disapprove_user")
-        ],
-        [
-            InlineKeyboardButton("🧹 Cleanup Expired Users", callback_data="admin_cleanup_expired"),
-            InlineKeyboardButton(get_text(query.from_user.id, "back") + " " + get_text(query.from_user.id, "to_main_menu"), callback_data="admin_main")
-        ]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await safe_edit_message(
-        query,
-        get_text(query.from_user.id, "user_management") + "\n\n" + get_text(query.from_user.id, "select_option"),
-        reply_markup=reply_markup
-    )
-
-async def admin_price_management_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Display the price management menu."""
-    query = update.callback_query
-    await query.answer()
-
-    if query.from_user.id != ADMIN_ID:
-        await safe_edit_message(query, get_text(query.from_user.id, "unauthorized"))
-        return
-
-    # Simplified price management menu - removed edit price option
-    keyboard = [
-        [
-            InlineKeyboardButton(get_text(query.from_user.id, "view_prices"), callback_data="admin_view_prices")
-        ],
-        [
-            InlineKeyboardButton(get_text(query.from_user.id, "back") + " " + get_text(query.from_user.id, "to_main_menu"), callback_data="admin_main")
-        ]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await safe_edit_message(
-        query,
-        get_text(query.from_user.id, "price_management") + "\n\n" + get_text(query.from_user.id, "select_option"),
-        reply_markup=reply_markup
-    )
-
-async def admin_communication_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Display the communication menu."""
-    query = update.callback_query
-    await query.answer()
-
-    if query.from_user.id != ADMIN_ID:
-        await safe_edit_message(query, get_text(query.from_user.id, "unauthorized"))
-        return
-
-    keyboard = [
-        [
-            InlineKeyboardButton(get_text(query.from_user.id, "broadcast_all"), callback_data="admin_broadcast_all"),
-            InlineKeyboardButton(get_text(query.from_user.id, "broadcast_approved"), callback_data="admin_broadcast_approved")
-        ],
-        [
-            InlineKeyboardButton(get_text(query.from_user.id, "back") + " " + get_text(query.from_user.id, "to_main_menu"), callback_data="admin_main")
-        ]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await safe_edit_message(
-        query,
-        get_text(query.from_user.id, "communication") + "\n\n" + get_text(query.from_user.id, "select_option"),
-        reply_markup=reply_markup
-    )
-
-async def admin_system_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Display the system management menu."""
-    query = update.callback_query
-    await query.answer()
-
-    if query.from_user.id != ADMIN_ID:
-        await safe_edit_message(query, get_text(query.from_user.id, "unauthorized"))
-        return
-
-    keyboard = [
-        [
-            InlineKeyboardButton(get_text(query.from_user.id, "change_rate_limit"), callback_data="admin_change_rate_limit"),
-            InlineKeyboardButton(get_text(query.from_user.id, "sync_files"), callback_data="admin_sync_files")
-        ],
-        [
-            InlineKeyboardButton(get_text(query.from_user.id, "statistics"), callback_data="admin_statistics"),
-            InlineKeyboardButton(get_text(query.from_user.id, "export_data"), callback_data="admin_export_data")
-        ],
-        [
-            InlineKeyboardButton(get_text(query.from_user.id, "back") + " " + get_text(query.from_user.id, "to_main_menu"), callback_data="admin_main")
-        ]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await safe_edit_message(
-        query,
-        get_text(query.from_user.id, "system_management") + "\n\n" + get_text(query.from_user.id, "select_option"),
-        reply_markup=reply_markup
-    )
-
-async def admin_statistics_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Display statistics about the bot."""
-    query = update.callback_query
-    await query.answer()
-
-    if query.from_user.id != ADMIN_ID:
-        await safe_edit_message(query, get_text(query.from_user.id, "unauthorized"))
-        return
-
-    total_users = len(all_users)
-    approved_users_count = len(approved_users) - 1
-    pending_users = total_users - approved_users_count
-
-    total_referrals = sum(len(data.get("referred_users", [])) for data in referral_data.values())
-    total_numbers_checked = sum(user.get("numbers_checked", 0) for user in all_users.values())
-
-    stats_text = get_text(
-        query.from_user.id,
-        "bot_statistics",
-        total_users=total_users,
-        approved_users=approved_users_count,
-        pending_users=pending_users,
-        total_referrals=total_referrals,
-        total_numbers_checked=total_numbers_checked,
-        last_updated=datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    )
-
-    keyboard = [
-        [InlineKeyboardButton(get_text(query.from_user.id, "back") + " " + get_text(query.from_user.id, "to_main_menu"), callback_data="admin_main")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await safe_edit_message(
-        query,
-        stats_text,
-        reply_markup=reply_markup,
-        parse_mode="HTML"
-    )
-
-async def admin_view_prices(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Display the current price list."""
-    query = update.callback_query
-    await query.answer()
-
-    if query.from_user.id != ADMIN_ID:
-        await safe_edit_message(query, get_text(query.from_user.id, "unauthorized"))
-        return
-
-    price_text = get_text(query.from_user.id, "current_price_list")
-
-    for key, value in price_list.items():
-        price_text += f"🔹 <b>{value['duration']}</b>: {value['price_bdt']} BDT / {value['price_usd']} USD\n"
-
-    keyboard = [
-        [InlineKeyboardButton(get_text(query.from_user.id, "back") + " " + get_text(query.from_user.id, "to_price_management"), callback_data="admin_price_management")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await safe_edit_message(
-        query,
-        price_text,
-        reply_markup=reply_markup,
-        parse_mode="HTML"
-    )
-
-async def admin_approved_users_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Display the list of approved users with their names."""
-    query = update.callback_query
-    await query.answer()
-
-    if query.from_user.id != ADMIN_ID:
-        await safe_edit_message(query, get_text(query.from_user.id, "unauthorized"))
-        return
-
-    if not approved_users:
-        await safe_edit_message(query, get_text(query.from_user.id, "no_approved_users"))
-        return
-
-    # Create inline buttons for each approved user with their names
-    keyboard = []
-    
-    for uid, expiry in approved_users.items():
-        # Get user name from all_users if available
-        user_name = "Unknown"
-        if str(uid) in all_users:
-            user_name = all_users[str(uid)].get("first_name", "Unknown")
-        
-        if uid == ADMIN_ID:
-            button_text = f"👑 Admin: {user_name}"
-        else:
-            if expiry is None:
-                button_text = f"✅ {user_name} (ID: {uid}) - Permanent"
-            else:
-                expiry_str = expiry.strftime('%Y-%m-%d')
-                button_text = f"✅ {user_name} (ID: {uid}) - Expires: {expiry_str}"
-        
-        keyboard.append([InlineKeyboardButton(button_text, callback_data=f"admin_user_details_{uid}")])
-    
-    # Add back button
-    keyboard.append([InlineKeyboardButton(get_text(query.from_user.id, "back") + " " + get_text(query.from_user.id, "to_user_management"), callback_data="admin_user_management")])
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await safe_edit_message(
-        query,
-        get_text(query.from_user.id, "approved_users") + "\n\n" + get_text(query.from_user.id, "select_user"),
-        reply_markup=reply_markup
-    )
-
-async def admin_all_users_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Display the list of all users as inline buttons."""
-    query = update.callback_query
-    await query.answer()
-
-    if query.from_user.id != ADMIN_ID:
-        await safe_edit_message(query, get_text(query.from_user.id, "unauthorized"))
-        return
-
-    if not all_users:
-        await safe_edit_message(query, get_text(query.from_user.id, "no_users"))
-        return
-
-    # Create inline buttons for each user
-    keyboard = []
-    
-    for uid, user_data in all_users.items():
-        name = user_data.get("first_name", "Unknown")
-        
-        if uid == str(ADMIN_ID):
-            button_text = f"👑 Admin: {name}"
-        elif int(uid) in approved_users:
-            button_text = f"✅ {name} (ID: {uid})"
-        else:
-            button_text = f"👤 {name} (ID: {uid})"
-        
-        keyboard.append([InlineKeyboardButton(button_text, callback_data=f"admin_user_details_{uid}")])
-    
-    # Add back button
-    keyboard.append([InlineKeyboardButton(get_text(query.from_user.id, "back") + " " + get_text(query.from_user.id, "to_user_management"), callback_data="admin_user_management")])
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await safe_edit_message(
-        query,
-        get_text(query.from_user.id, "all_users") + "\n\n" + get_text(query.from_user.id, "select_user"),
-        reply_markup=reply_markup
-    )
-
-async def admin_user_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Display details for a specific user with disapprove button for approved users."""
-    query = update.callback_query
-    await query.answer()
-
-    if query.from_user.id != ADMIN_ID:
-        await safe_edit_message(query, get_text(query.from_user.id, "unauthorized"))
-        return
-
-    # আরও ভালো কলব্যাক ডেটা পার্সিং
-    if not query.data or not query.data.startswith("admin_user_details_"):
-        await safe_edit_message(query, "Invalid callback data format")
-        return
-
-    user_id_str = query.data.replace("admin_user_details_", "")
-    
-    # নিশ্চিত করুন যে user_id_str খালি নয়
-    if not user_id_str:
-        await safe_edit_message(query, get_text(query.from_user.id, "invalid_user_id"))
-        return
-    
-    try:
-        user_id = int(user_id_str)
-    except ValueError:
-        await safe_edit_message(query, get_text(query.from_user.id, "invalid_user_id"))
-        return
-    
-    # নিশ্চিত করুন যে ইউজার ID সব ইউজার লিস্টে আছে
-    if user_id_str not in all_users:
-        await safe_edit_message(query, "User not found in all users list.")
-        return
-    
-    user_data = all_users[user_id_str]
-    
-    # Get user details
-    first_name = user_data.get("first_name", "Unknown")
-    last_name = user_data.get("last_name", "")
-    username = user_data.get("username", "None")
-    last_interaction = user_data.get("last_interaction", "Unknown")
-    numbers_checked = user_data.get("numbers_checked", 0)
-    
-    # Get user language
-    language = get_user_language(user_id)
-    
-    # Check if user is approved
-    is_approved = user_id in approved_users
-    expiry_info = ""
-    
-    if is_approved:
-        expiry_date = approved_users.get(user_id)
-        if expiry_date is None:
-            expiry_info = "Access: Permanent"
-        else:
-            expiry_str = expiry_date.strftime('%Y-%m-%d %H:%M:%S UTC')
-            expiry_info = f"Access until: {expiry_str}"
-    else:
-        expiry_info = "Access: Not approved"
-    
-    # Get referral info
-    referral_info = ""
-    if user_id_str in referral_data:
-        referral_code = referral_data[user_id_str].get("referral_code", "None")
-        referred_by = referral_data[user_id_str].get("referred_by", "None")
-        referred_users = referral_data[user_id_str].get("referred_users", [])
-        
-        referral_info = f"\nReferral Code: {referral_code}"
-        if referred_by:
-            referral_info += f"\nReferred By: {referred_by}"
-        if referred_users:
-            referral_info += f"\nReferred Users: {len(referred_users)}"
-    
-    # Create user details text - Fixed HTML parsing issue
-    details_text = "👤 User Details\n\n"
-    details_text += f"ID: {user_id}\n"
-    details_text += f"Name: {first_name} {last_name}\n"
-    details_text += f"Username: @{username}\n"
-    details_text += f"Language: {language}\n"
-    details_text += f"Last Interaction: {last_interaction}\n"
-    details_text += f"Approved: {'Yes' if is_approved else 'No'}\n"
-    details_text += f"Numbers Checked: {numbers_checked}\n"
-    details_text += expiry_info
-    details_text += referral_info
-    
-    # Create action buttons
-    keyboard = []
-    
-    # Add disapprove button if user is approved and not admin
-    if user_id != ADMIN_ID and is_approved:
-        keyboard.append([InlineKeyboardButton("➖ Disapprove User", callback_data=f"admin_disapprove_user_{user_id}")])
-    
-    # Add approve button if user is not approved
-    if not is_approved:
-        keyboard.append([InlineKeyboardButton("➕ Approve User", callback_data=f"admin_approve_user_{user_id}")])
-    
-    keyboard.append([InlineKeyboardButton(get_text(query.from_user.id, "back") + " " + get_text(query.from_user.id, "to_user_management"), callback_data="admin_user_management")])
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await safe_edit_message(
-        query,
-        details_text,
-        reply_markup=reply_markup
-    )
-
-async def admin_approve_user_from_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Approve a user from the details view."""
-    query = update.callback_query
-    await query.answer()
-
-    if query.from_user.id != ADMIN_ID:
-        await safe_edit_message(query, get_text(query.from_user.id, "unauthorized"))
-        return
-
-    # আরও ভালো কলব্যাক ডেটা পার্সিং
-    if not query.data or not query.data.startswith("admin_approve_user_"):
-        await safe_edit_message(query, "Invalid callback data format")
-        return
-
-    user_id_str = query.data.replace("admin_approve_user_", "")
-    
-    # নিশ্চিত করুন যে user_id_str খালি নয়
-    if not user_id_str:
-        await safe_edit_message(query, get_text(query.from_user.id, "invalid_user_id"))
-        return
-    
-    try:
-        user_id = int(user_id_str)
-    except ValueError:
-        await safe_edit_message(query, get_text(query.from_user.id, "invalid_user_id"))
-        return
-    
-    # Default approval: 7 days
-    expiry_date = datetime.now(timezone.utc) + timedelta(days=7)
-    approved_users[user_id] = expiry_date
-    expiry_str = expiry_date.strftime('%Y-%m-%d %H:%M:%S UTC')
-
-    await save_users_to_file()
-
-    # নোটিফিকেশন পাঠানোর আগে চেক করুন যে ইউজারটি বটের সাথে ইন্টারঅ্যাক্ট করেছে কিনা
-    if user_id_str in all_users:
-        await send_user_notification(
-            context,
-            user_id,
-            get_text(
-                user_id,
-                "access_approved",
-                expiry_date=expiry_str
-            )
-        )
-    
-    # Show updated user details
-    await admin_user_details(update, context)
-
-async def admin_disapprove_user_from_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Disapprove a user from the details view."""
-    query = update.callback_query
-    await query.answer()
-
-    if query.from_user.id != ADMIN_ID:
-        await safe_edit_message(query, get_text(query.from_user.id, "unauthorized"))
-        return
-
-    # আরও ভালো কলব্যাক ডেটা পার্সিং
-    if not query.data or not query.data.startswith("admin_disapprove_user_"):
-        await safe_edit_message(query, "Invalid callback data format")
-        return
-
-    user_id_str = query.data.replace("admin_disapprove_user_", "")
-    
-    # নিশ্চিত করুন যে user_id_str খালি নয়
-    if not user_id_str:
-        await safe_edit_message(query, get_text(query.from_user.id, "invalid_user_id"))
-        return
-    
-    try:
-        user_id = int(user_id_str)
-    except ValueError:
-        await safe_edit_message(query, get_text(query.from_user.id, "invalid_user_id"))
-        return
-    
-    if user_id == ADMIN_ID:
-        await safe_edit_message(query, get_text(query.from_user.id, "cannot_disapprove_admin"))
-        return
-
-    if user_id in approved_users:
-        del approved_users[user_id]
-        await save_users_to_file()
-
-        # নোটিফিকেশন পাঠানোর আগে চেক করুন যে ইউজারটি বটের সাথে ইন্টারঅ্যাক্ট করেছে কিনা
-        if user_id_str in all_users:
-            await send_user_notification(
-                context,
-                user_id,
-                get_text(user_id, "access_revoked")
-            )
-    
-    # Show updated user details
-    await admin_user_details(update, context)
-
-async def admin_approve_user_paginated(update: Update, context: ContextTypes.DEFAULT_TYPE, page=1):
-    """Display paginated list of users to approve with plan selection."""
-    query = update.callback_query if update.callback_query else None
-    
-    if query:
-        user_id = query.from_user.id
-        await query.answer()
-    else:
-        user_id = update.effective_user.id
-
-    if user_id != ADMIN_ID:
-        if query:
-            await safe_edit_message(query, get_text(user_id, "unauthorized"))
-        else:
-            await update.message.reply_text(get_text(user_id, "unauthorized"))
-        return
-
-    # Get users who are not approved yet
-    pending_users = []
-    for uid_str, user_data in all_users.items():
-        uid = int(uid_str)
-        if uid != ADMIN_ID and uid not in approved_users:
-            pending_users.append((uid, user_data))
-    
-    if not pending_users:
-        message_text = get_text(user_id, "no_pending_users")
-        keyboard = [[InlineKeyboardButton(get_text(user_id, "back") + " " + get_text(user_id, "to_user_management"), callback_data="admin_user_management")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        if query:
-            await safe_edit_message(query, message_text, reply_markup=reply_markup)
-        else:
-            await update.message.reply_text(message_text, reply_markup=reply_markup)
-        return
-
-    # Calculate pagination
-    total_users = len(pending_users)
-    total_pages = (total_users + USERS_PER_PAGE - 1) // USERS_PER_PAGE
-    start_index = (page - 1) * USERS_PER_PAGE
-    end_index = start_index + USERS_PER_PAGE
-    current_page_users = pending_users[start_index:end_index]
-
-    # Create message text
-    message_text = get_text(user_id, "select_user_to_approve")
-    if total_pages > 1:
-        message_text += f"\n\n{get_text(user_id, 'page_info', current_page=page, total_pages=total_pages)}"
-
-    # Create keyboard with user buttons
-    keyboard = []
-    
-    for uid, user_data in current_page_users:
-        name = user_data.get("first_name", "Unknown")
-        button_text = f"👤 {name} (ID: {uid})"
-        keyboard.append([InlineKeyboardButton(button_text, callback_data=f"admin_select_plan_{uid}")])
-    
-    # Add pagination buttons if needed
-    nav_buttons = []
-    if page > 1:
-        nav_buttons.append(InlineKeyboardButton("⬅️ Previous", callback_data=f"admin_approve_paginated_{page-1}"))
-    
-    if page < total_pages:
-        nav_buttons.append(InlineKeyboardButton("Next ➡️", callback_data=f"admin_approve_paginated_{page+1}"))
-    
-    if nav_buttons:
-        keyboard.append(nav_buttons)
-    
-    # Add back button
-    keyboard.append([InlineKeyboardButton(get_text(user_id, "back") + " " + get_text(user_id, "to_user_management"), callback_data="admin_user_management")])
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    if query:
-        await safe_edit_message(query, message_text, reply_markup=reply_markup)
-    else:
-        await update.message.reply_text(message_text, reply_markup=reply_markup)
-
-async def admin_select_plan_for_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Display plan selection for a specific user."""
-    query = update.callback_query
-    await query.answer()
-
-    if query.from_user.id != ADMIN_ID:
-        await safe_edit_message(query, get_text(query.from_user.id, "unauthorized"))
-        return
-
-    user_id_str = query.data.replace("admin_select_plan_", "")
-    
-    try:
-        user_id = int(user_id_str)
-    except ValueError:
-        await safe_edit_message(query, get_text(query.from_user.id, "invalid_user_id"))
-        return
-    
-    if user_id_str not in all_users:
-        await safe_edit_message(query, "User not found in all users list.")
-        return
-    
-    user_data = all_users[user_id_str]
-    user_name = user_data.get("first_name", "Unknown")
-    
-    # Store the selected user ID for later use
-    context.user_data["selected_user_id"] = user_id
-    
-    # Create plan selection keyboard
-    keyboard = []
-    
-    for key, value in price_list.items():
-        button_text = f"{value['duration']} - {value['price_bdt']} BDT / {value['price_usd']} USD"
-        keyboard.append([InlineKeyboardButton(button_text, callback_data=f"admin_approve_with_plan_{key}")])
-    
-    # Add back button
-    keyboard.append([InlineKeyboardButton(get_text(query.from_user.id, "back") + " " + get_text(query.from_user.id, "to_user_management"), callback_data="admin_user_management")])
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    message_text = get_text(query.from_user.id, "select_plan_for_user", user_name=user_name)
-    
-    await safe_edit_message(
-        query,
-        message_text,
-        reply_markup=reply_markup
-    )
-
-async def admin_approve_with_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Approve a user with a specific plan."""
-    query = update.callback_query
-    await query.answer()
-
-    if query.from_user.id != ADMIN_ID:
-        await safe_edit_message(query, get_text(query.from_user.id, "unauthorized"))
-        return
-
-    plan_key = query.data.replace("admin_approve_with_plan_", "")
-    
-    if plan_key not in price_list:
-        await safe_edit_message(query, get_text(query.from_user.id, "invalid_duration_selected"))
-        return
-    
-    # Get the selected user ID
-    user_id = context.user_data.get("selected_user_id")
-    if not user_id:
-        await safe_edit_message(query, "No user selected. Please try again.")
-        return
-    
-    # Calculate expiry date based on plan
-    plan_duration = price_list[plan_key]["duration"]
-    
-    if "day" in plan_duration.lower():
-        days = int(plan_duration.split()[0])
-        expiry_date = datetime.now(timezone.utc) + timedelta(days=days)
-    else:
-        # Default to 7 days if we can't parse the duration
-        expiry_date = datetime.now(timezone.utc) + timedelta(days=7)
-    
-    # Approve the user
-    approved_users[user_id] = expiry_date
-    expiry_str = expiry_date.strftime('%Y-%m-%d %H:%M:%S UTC')
-    
-    await save_users_to_file()
-    
-    # Send notification to the user
-    user_id_str = str(user_id)
-    if user_id_str in all_users:
-        await send_user_notification(
-            context,
-            user_id,
-            get_text(
-                user_id,
-                "access_approved",
-                expiry_date=expiry_str
-            )
-        )
-    
-    # Show success message
-    user_name = all_users.get(str(user_id), {}).get("first_name", "Unknown")
-    success_text = f"✅ User {user_name} (ID: {user_id}) has been approved with the {plan_duration} plan until {expiry_str}."
-    
-    keyboard = [
-        [InlineKeyboardButton(get_text(query.from_user.id, "back") + " " + get_text(query.from_user.id, "to_user_management"), callback_data="admin_user_management")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await safe_edit_message(
-        query,
-        success_text,
-        reply_markup=reply_markup
-    )
-
-async def admin_approve_user_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Display the approve user menu."""
-    query = update.callback_query
-    await query.answer()
-
-    if query.from_user.id != ADMIN_ID:
-        await safe_edit_message(query, get_text(query.from_user.id, "unauthorized"))
-        return
-
-    keyboard = [
-        [InlineKeyboardButton(get_text(query.from_user.id, "back") + " " + get_text(query.from_user.id, "to_user_management"), callback_data="admin_user_management")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await safe_edit_message(
-        query,
-        get_text(query.from_user.id, "approve_user_msg"),
-        reply_markup=reply_markup,
-        parse_mode="HTML"
-    )
-
-async def admin_disapprove_user_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Display the disapprove user menu."""
-    query = update.callback_query
-    await query.answer()
-
-    if query.from_user.id != ADMIN_ID:
-        await safe_edit_message(query, get_text(query.from_user.id, "unauthorized"))
-        return
-
-    keyboard = [
-        [InlineKeyboardButton(get_text(query.from_user.id, "back") + " " + get_text(query.from_user.id, "to_user_management"), callback_data="admin_user_management")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await safe_edit_message(
-        query,
-        get_text(query.from_user.id, "disapprove_user_msg"),
-        reply_markup=reply_markup,
-        parse_mode="HTML"
-    )
-
-async def admin_broadcast_all_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Display the broadcast to all users menu."""
-    query = update.callback_query
-    await query.answer()
-
-    if query.from_user.id != ADMIN_ID:
-        await safe_edit_message(query, get_text(query.from_user.id, "unauthorized"))
-        return
-
-    keyboard = [
-        [InlineKeyboardButton(get_text(query.from_user.id, "back") + " " + get_text(query.from_user.id, "to_communication"), callback_data="admin_communication")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await safe_edit_message(
-        query,
-        get_text(query.from_user.id, "broadcast_all_msg"),
-        reply_markup=reply_markup,
-        parse_mode="HTML"
-    )
-
-async def admin_broadcast_approved_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Display the broadcast to approved users menu."""
-    query = update.callback_query
-    await query.answer()
-
-    if query.from_user.id != ADMIN_ID:
-        await safe_edit_message(query, get_text(query.from_user.id, "unauthorized"))
-        return
-
-    keyboard = [
-        [InlineKeyboardButton(get_text(query.from_user.id, "back") + " " + get_text(query.from_user.id, "to_communication"), callback_data="admin_communication")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await safe_edit_message(
-        query,
-        get_text(query.from_user.id, "broadcast_approved_msg"),
-        reply_markup=reply_markup,
-        parse_mode="HTML"
-    )
-
-async def admin_sync_files_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle syncing files."""
-    query = update.callback_query
-    await query.answer()
-
-    if query.from_user.id != ADMIN_ID:
-        await safe_edit_message(query, get_text(query.from_user.id, "unauthorized"))
-        return
-
-    await safe_edit_message(query, get_text(query.from_user.id, "syncing"))
-
-    await load_users_from_file()
-    await load_referral_data_from_file()
-    await load_all_users_from_file()
-    await load_price_list_from_file()
-    await load_user_settings_from_file()
-    await load_config_from_file()
-
-    success_users = await save_users_to_file()
-    success_referral = await save_referral_data_to_file()
-    success_all_users = await save_all_users_to_file()
-    success_price = await save_price_list_to_file()
-    success_settings = await save_user_settings_to_file()
-    success_config = await save_config_to_file()
-
-    keyboard = [
-        [InlineKeyboardButton(get_text(query.from_user.id, "back") + " " + get_text(query.from_user.id, "to_system_management"), callback_data="admin_system")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    if success_users and success_referral and success_all_users and success_price and success_settings and success_config:
-        await safe_edit_message(
-            query,
-            get_text(query.from_user.id, "sync_success"),
-            reply_markup=reply_markup
-        )
-    else:
-        await safe_edit_message(
-            query,
-            get_text(query.from_user.id, "sync_failed"),
-            reply_markup=reply_markup
-        )
-
-async def admin_cleanup_expired_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle cleanup of expired users."""
-    query = update.callback_query
-    await query.answer()
-
-    if query.from_user.id != ADMIN_ID:
-        await safe_edit_message(query, get_text(query.from_user.id, "unauthorized"))
-        return
-
-    await safe_edit_message(query, get_text(query.from_user.id, "cleanup_expired"))
-    
-    # Run the cleanup function
-    removed_count = await cleanup_expired_users()
-    
-    keyboard = [
-        [InlineKeyboardButton(get_text(query.from_user.id, "back") + " " + get_text(query.from_user.id, "to_user_management"), callback_data="admin_user_management")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await safe_edit_message(
-        query,
-        get_text(query.from_user.id, "cleanup_complete", count=removed_count),
-        reply_markup=reply_markup
-    )
-
-async def admin_export_data_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle exporting bot data."""
-    query = update.callback_query
-    await query.answer()
-
-    if query.from_user.id != ADMIN_ID:
-        await safe_edit_message(query, get_text(query.from_user.id, "unauthorized"))
-        return
-
-    await safe_edit_message(query, get_text(query.from_user.id, "export_data_msg"))
-    
-    # Export the data
-    zip_buffer = await export_bot_data()
-    
-    if zip_buffer:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"bot_data_{timestamp}.zip"
-        
-        # Send the zip file
-        await context.bot.send_document(
-            chat_id=query.message.chat_id,
-            document=zip_buffer,
-            filename=filename,
-            caption=get_text(query.from_user.id, "export_complete")
-        )
-        
-        # Reset the message
-        keyboard = [
-            [InlineKeyboardButton(get_text(query.from_user.id, "back") + " " + get_text(query.from_user.id, "to_system_management"), callback_data="admin_system")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await safe_edit_message(
-            query,
-            get_text(query.from_user.id, "export_complete"),
-            reply_markup=reply_markup
-        )
-    else:
-        await safe_edit_message(
-            query,
-            "❌ Failed to export data. Please check the logs.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton(get_text(query.from_user.id, "back") + " " + get_text(query.from_user.id, "to_system_management"), callback_data="admin_system")]
-            ])
-        )
-
-async def admin_change_rate_limit_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Display the change rate limit menu."""
-    query = update.callback_query
-    await query.answer()
-
-    if query.from_user.id != ADMIN_ID:
-        await safe_edit_message(query, get_text(query.from_user.id, "unauthorized"))
-        return
-
-    current_limit = config_data.get("rate_limit_seconds", DEFAULT_RATE_LIMIT_SECONDS)
-    minutes = current_limit // 60
-    seconds = current_limit % 60
-    if minutes > 0:
-        time_str = f"{minutes} minute{'s' if minutes > 1 else ''} and {seconds} second{'s' if seconds != 1 else ''}"
-    else:
-        time_str = f"{seconds} second{'s' if seconds != 1 else ''}"
-
-    keyboard = [
-        [InlineKeyboardButton(get_text(query.from_user.id, "back") + " " + get_text(query.from_user.id, "to_system_management"), callback_data="admin_system")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await safe_edit_message(
-        query,
-        get_text(query.from_user.id, "change_rate_limit_msg", current_limit=current_limit, current_time_str=time_str),
-        reply_markup=reply_markup,
-        parse_mode="HTML"
-    )
-
-# --- Telegram Bot Handlers ---
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Sends a message when the command /start is issued."""
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /start and show language selection if not set."""
     user = update.effective_user
-
     await track_user(user, update)
 
     user_id_str = str(user.id)
 
-    # Check if user has language preference
     if user_id_str in user_settings and "language" in user_settings[user_id_str]:
         language = user_settings[user_id_str]["language"]
 
         # Process referral if present
-        referral_code = None
-        if context.args and len(context.args) > 0:
-            referral_code = context.args[0]
-
+        referral_code = context.args[0] if context.args else None
+        if referral_code:
             referrer_id = None
             for uid, data in referral_data.items():
-                if data["referral_code"] == referral_code:
+                if data.get("referral_code") == referral_code:
                     referrer_id = uid
                     break
-
-            if referrer_id and referrer_id != str(user.id):
-                success, message = await process_referral(referrer_id, user.id, context)
-                # Only send message to the new user, not the referrer message
+            if referrer_id and referrer_id != user_id_str:
+                success, _ = await process_referral(
+                    int(referrer_id), user.id, context
+                )
                 if success:
-                    await update.message.reply_text(get_text(user.id, "referral_successful", referral_count=1))
+                    await update.message.reply_text(
+                        get_text(user.id, "referral_successful", referral_count=1)
+                    )
 
         user_referral_code = await get_or_create_referral_code(user.id)
 
@@ -1844,40 +1629,37 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "last_interaction": datetime.now().isoformat(),
             "approved": user.id in approved_users,
             "referral_code": user_referral_code,
-            "language": language
+            "language": language,
         }
-
         if user.id in approved_users and approved_users[user.id] is not None:
             user_data["expiry_date"] = approved_users[user.id].isoformat()
 
         await save_user_details_to_file(user.id, user_data)
+        await save_user_to_db(user.id, user_data)
 
         await update.message.reply_html(
             get_text(user.id, "language_selected", first_name=user.first_name)
         )
         await update.message.reply_text(get_text(user.id, "example"))
     else:
-        # First time user - show language selection
         keyboard = [
             [
-                InlineKeyboardButton("🇺🇸 English", callback_data=f"set_language_en"),
-                InlineKeyboardButton("🇧🇩 বাংলা", callback_data=f"set_language_bn")
+                InlineKeyboardButton("🇺🇸 English", callback_data="set_language_en"),
+                InlineKeyboardButton("🇧🇩 বাংলা", callback_data="set_language_bn"),
             ]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        # Store referral code if present for later processing
-        if context.args and len(context.args) > 0:
-            referral_code = context.args[0]
-            context.user_data["pending_referral"] = referral_code
+        if context.args:
+            context.user_data["pending_referral"] = context.args[0]
 
         await update.message.reply_html(
             get_text(user.id, "welcome", first_name=user.first_name),
-            reply_markup=reply_markup
+            reply_markup=reply_markup,
         )
 
-async def admin_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Provides the admin's contact information."""
+
+async def admin_contact(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     await track_user(user, update)
 
@@ -1886,43 +1668,109 @@ async def admin_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "admin_contact",
         admin_name=ADMIN_FIRST_NAME,
         admin_id=ADMIN_ID,
-        admin_username=ADMIN_USERNAME
+        admin_username=ADMIN_USERNAME,
     )
-    await update.message.reply_html(contact_text)
 
-async def show_price_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Shows the price list for bot access."""
+    if user.id == ADMIN_ID:
+        keyboard = [
+            [InlineKeyboardButton("⚙️ Open Admin Panel", callback_data="admin_open_panel")]
+        ]
+        await update.message.reply_html(
+            contact_text, reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    else:
+        await update.message.reply_html(contact_text)
+
+
+async def show_price_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show the price list with inline buttons for buy/refer."""
     user = update.effective_user
     await track_user(user, update)
 
-    price_text = get_text(user.id, "price_list")
+    text = get_text(user.id, "price_list")
+    for _, value in price_list.items():
+        text += (
+            f"🔹 <b>{value['duration']}</b>: "
+            f"{value['price_bdt']} BDT / {value['price_usd']} USD\n"
+        )
+    text += get_text(user.id, "payment_methods")
 
-    for key, value in price_list.items():
-        price_text += f"🔹 <b>{value['duration']}</b>: {value['price_bdt']} BDT / {value['price_usd']} USD\n"
+    keyboard = [
+        [InlineKeyboardButton(get_text(user.id, "buy_online"), callback_data="buy_online")],
+        [InlineKeyboardButton(get_text(user.id, "refer_earn"), callback_data="refer")],
+    ]
 
-    price_text += get_text(user.id, "payment_methods")
+    await update.message.reply_html(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
-    await update.message.reply_html(price_text)
 
-async def show_admin_commands(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Shows the admin panel with inline buttons."""
-    await admin_main_menu(update, context)
+async def show_admin_commands(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show admin commands as an inline button menu."""
+    user = update.effective_user
+    unauthorized_text = get_text(user.id, "unauthorized")
 
-async def referral_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Shows the user's referral status and referral link."""
+    # Handle unauthorized access both for commands and callbacks
+    if user.id != ADMIN_ID:
+        if getattr(update, "message", None) is not None:
+            await update.message.reply_text(unauthorized_text)
+        else:
+            query = getattr(update, "callback_query", None)
+            if query is not None:
+                await query.edit_message_text(unauthorized_text)
+        return
+
+    keyboard = [
+        [
+            InlineKeyboardButton("✅ Approved users", callback_data="admin_list_approved"),
+            InlineKeyboardButton("📊 Stats", callback_data="admin_list_all"),
+        ],
+        [
+            InlineKeyboardButton("➕ Approve user", callback_data="admin_help_approve"),
+            InlineKeyboardButton("➖ Disapprove user", callback_data="admin_help_disapprove"),
+        ],
+        [
+            InlineKeyboardButton("📢 Broadcast all", callback_data="admin_help_broadcast"),
+            InlineKeyboardButton(
+                "📢 Approved only", callback_data="admin_help_broadcast_approved"
+            ),
+        ],
+        [
+            InlineKeyboardButton("⚙️ Rate limit", callback_data="admin_help_setratelimit"),
+            InlineKeyboardButton("🔄 Sync files", callback_data="admin_do_sync"),
+        ],
+        [
+            InlineKeyboardButton("🧹 Cleanup expired", callback_data="admin_do_cleanup"),
+            InlineKeyboardButton("📦 Export data", callback_data="admin_do_export"),
+        ],
+        [
+            InlineKeyboardButton("💰 Price list", callback_data="admin_show_pricelist"),
+        ],
+    ]
+    msg = get_text(user.id, "admin_panel")
+    markup = InlineKeyboardMarkup(keyboard)
+
+    # If called from a normal message (/cmd), reply; if from a callback, edit the message
+    if getattr(update, "message", None) is not None:
+        await update.message.reply_html(msg, reply_markup=markup)
+    else:
+        query = getattr(update, "callback_query", None)
+        if query is not None:
+            await query.edit_message_text(msg, reply_markup=markup, parse_mode="HTML")
+
+
+async def referral_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show current referral status and inline share button."""
     user = update.effective_user
     await track_user(user, update)
 
-    user_id = str(user.id)
-
+    user_id_str = str(user.id)
     referral_code = await get_or_create_referral_code(user.id)
 
     bot_username = (await context.bot.get_me()).username
     referral_link = f"https://t.me/{bot_username}?start={referral_code}"
 
     referral_count = 0
-    if user_id in referral_data:
-        referral_count = len(referral_data[user_id]["referred_users"])
+    if user_id_str in referral_data:
+        referral_count = len(referral_data[user_id_str].get("referred_users", []))
 
     has_access = is_user_approved(user.id, context)
 
@@ -1931,13 +1779,13 @@ async def referral_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "referral_status",
         referral_code=referral_code,
         referral_link=referral_link,
-        referral_count=referral_count
+        referral_count=referral_count,
     )
 
     if has_access:
         expiry_date = approved_users.get(user.id)
         if expiry_date:
-            expiry_str = expiry_date.strftime('%Y-%m-%d %H:%M:%S UTC')
+            expiry_str = expiry_date.strftime("%Y-%m-%d %H:%M:%S UTC")
             message += get_text(user.id, "access_until", expiry_date=expiry_str)
         else:
             message += get_text(user.id, "permanent_access")
@@ -1946,52 +1794,59 @@ async def referral_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message += get_text(user.id, "refer_needed", remaining=remaining)
 
     keyboard = [
-        [InlineKeyboardButton("Share Referral Link", url=f"https://t.me/share/url?url={referral_link}&text=Join this amazing Facebook Number Checker Bot and get free access!")]
+        [
+            InlineKeyboardButton(
+                "Share Referral Link",
+                url=(
+                    "https://t.me/share/url?"
+                    f"url={referral_link}&text=Join this amazing Facebook Number "
+                    "Checker Bot and get free access!"
+                ),
+            )
+        ]
     ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_html(message, reply_markup=InlineKeyboardMarkup(keyboard))
 
-    await update.message.reply_html(message, reply_markup=reply_markup)
 
-async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles button callbacks."""
+async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
 
-    # Fix for NoneType error: Check if query.data is None before using .replace()
-    if query.data is None:
-        logger.error("Received None for query.data in button_callback")
+    if not query.data:
         return
 
+    # Open admin panel from inline button
+    if query.data == "admin_open_panel":
+        await show_admin_commands(update, context)
+        return
+
+    # Language selection buttons
     if query.data.startswith("set_language_"):
         language = query.data.replace("set_language_", "")
         await set_user_language(query.from_user.id, language)
 
-        # Process pending referral if exists
-        referral_code = None
-        if "pending_referral" in context.user_data:
-            referral_code = context.user_data["pending_referral"]
-            del context.user_data["pending_referral"]
-        elif query.message and query.message.text and "/start" in query.message.text:
-            parts = query.message.text.split()
-            if len(parts) > 1:
-                referral_code = parts[1]
-
+        referral_code = context.user_data.pop("pending_referral", None)
         if referral_code:
             referrer_id = None
             for uid, data in referral_data.items():
-                if data["referral_code"] == referral_code:
+                if data.get("referral_code") == referral_code:
                     referrer_id = uid
                     break
-
             if referrer_id and referrer_id != str(query.from_user.id):
-                success, message = await process_referral(referrer_id, query.from_user.id, context)
-                # Only send message to the new user, not the referrer message
+                success, _ = await process_referral(
+                    int(referrer_id), query.from_user.id, context
+                )
                 if success:
-                    await safe_edit_message(query, get_text(query.from_user.id, "referral_successful", referral_count=1))
+                    await query.edit_message_text(
+                        get_text(
+                            query.from_user.id,
+                            "referral_successful",
+                            referral_count=1,
+                        )
+                    )
                     return
 
         user_referral_code = await get_or_create_referral_code(query.from_user.id)
-
         user_data = {
             "id": query.from_user.id,
             "first_name": query.from_user.first_name,
@@ -2002,49 +1857,150 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "last_interaction": datetime.now().isoformat(),
             "approved": query.from_user.id in approved_users,
             "referral_code": user_referral_code,
-            "language": language
+            "language": language,
         }
-
-        if query.from_user.id in approved_users and approved_users[query.from_user.id] is not None:
+        if query.from_user.id in approved_users and approved_users[query.from_user.id]:
             user_data["expiry_date"] = approved_users[query.from_user.id].isoformat()
 
         await save_user_details_to_file(query.from_user.id, user_data)
+        await save_user_to_db(query.from_user.id, user_data)
 
-        await safe_edit_message(
-            query,
-            get_text(query.from_user.id, "language_selected", first_name=query.from_user.first_name)
+        await query.edit_message_text(
+            get_text(
+                query.from_user.id,
+                "language_selected",
+                first_name=query.from_user.first_name,
+            )
         )
         await context.bot.send_message(
             chat_id=query.message.chat_id,
-            text=get_text(query.from_user.id, "example")
+            text=get_text(query.from_user.id, "example"),
         )
         return
 
+    # Normal user buttons
     if query.data == "buy_online":
-        await safe_edit_message(
-            query,
-            get_text(query.from_user.id, "buy_online_msg"),
-            parse_mode="HTML"
+        # Show online payment methods (currently only Binance Pay)
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    get_text(query.from_user.id, "payment_binance"),
+                    callback_data="pay_binance",
+                )
+            ],
+            [InlineKeyboardButton("🔙 Back", callback_data="back_to_price")],
+        ]
+        await query.edit_message_text(
+            get_text(query.from_user.id, "select_payment_method"),
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(keyboard),
         )
-    elif query.data == "refer":
-        user_id = str(query.from_user.id)
+        return
 
+    if query.data == "back_to_price":
+        # Re-render the price list message
+        user = query.from_user
+        text = get_text(user.id, "price_list")
+        for _, value in price_list.items():
+            text += (
+                f"🔹 <b>{value['duration']}</b>: "
+                f"{value['price_bdt']} BDT / {value['price_usd']} USD\n"
+            )
+        text += get_text(user.id, "payment_methods")
+
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    get_text(user.id, "buy_online"), callback_data="buy_online"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    get_text(user.id, "refer_earn"), callback_data="refer"
+                )
+            ],
+        ]
+        await query.edit_message_text(
+            text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
+
+    if query.data == "pay_binance":
+        # Let user pick a plan for Binance Pay
+        user_id = query.from_user.id
+        text = get_text(user_id, "select_plan_binance")
+
+        keyboard: list[list[InlineKeyboardButton]] = []
+        for key, value in price_list.items():
+            label = f"{value['duration']} - {value['price_usd']} USD"
+            keyboard.append(
+                [
+                    InlineKeyboardButton(
+                        label, callback_data=f"pay_binance_plan_{key}"
+                    )
+                ]
+            )
+
+        keyboard.append(
+            [InlineKeyboardButton("🔙 Back", callback_data="buy_online")]
+        )
+
+        await query.edit_message_text(
+            text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
+
+    if query.data.startswith("pay_binance_plan_"):
+        # Show simple invoice with Binance Pay ID
+        plan_key = query.data.replace("pay_binance_plan_", "", 1)
+        plan = price_list.get(plan_key)
+        if not plan:
+            await query.edit_message_text("Selected plan not found.")
+            return
+
+        user_id = query.from_user.id
+        admin_username_clean = ADMIN_USERNAME.lstrip("@")
+        text = get_text(
+            user_id,
+            "binance_invoice",
+            duration=plan["duration"],
+            price_bdt=plan["price_bdt"],
+            price_usd=plan["price_usd"],
+            pay_id="909906294",
+            admin_username=admin_username_clean,
+        )
+
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "💬 Contact Admin",
+                    url=f"https://t.me/{admin_username_clean}",
+                )
+            ],
+            [InlineKeyboardButton("🔙 Back", callback_data="pay_binance")],
+        ]
+
+        await query.edit_message_text(
+            text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
+
+    if query.data == "refer":
+        user_id_str = str(query.from_user.id)
         referral_code = await get_or_create_referral_code(query.from_user.id)
-
         bot_username = (await context.bot.get_me()).username
         referral_link = f"https://t.me/{bot_username}?start={referral_code}"
 
         referral_count = 0
-        if user_id in referral_data:
-            referral_count = len(referral_data[user_id]["referred_users"])
+        if user_id_str in referral_data:
+            referral_count = len(referral_data[user_id_str].get("referred_users", []))
 
         message = get_text(
             query.from_user.id,
             "refer_link",
             referral_link=referral_link,
-            referral_count=referral_count
+            referral_count=referral_count,
         )
-
         if referral_count >= 3:
             message += get_text(query.from_user.id, "refer_earned")
         else:
@@ -2052,79 +2008,334 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             message += get_text(query.from_user.id, "refer_needed", remaining=remaining)
 
         keyboard = [
-            [InlineKeyboardButton("Share Referral Link", url=f"https://t.me/share/url?url={referral_link}&text=Join this amazing Facebook Number Checker Bot and get free access!")]
+            [
+                InlineKeyboardButton(
+                    "Share Referral Link",
+                    url=(
+                        "https://t.me/share/url?"
+                        f"url={referral_link}&text=Join this amazing Facebook "
+                        "Number Checker Bot and get free access!"
+                    ),
+                )
+            ]
         ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
-        await safe_edit_message(
-            query,
-            text=message,
-            parse_mode="HTML",
-            reply_markup=reply_markup
+        await query.edit_message_text(
+            text=message, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard)
         )
+        return
 
-    elif query.data == "admin_main":
-        await admin_main_menu(update, context)
-    elif query.data == "admin_user_management":
-        await admin_user_management_menu(update, context)
-    elif query.data == "admin_price_management":
-        await admin_price_management_menu(update, context)
-    elif query.data == "admin_communication":
-        await admin_communication_menu(update, context)
-    elif query.data == "admin_system":
-        await admin_system_menu(update, context)
-    elif query.data == "admin_statistics":
-        await admin_statistics_menu(update, context)
-    elif query.data == "admin_view_prices":
-        await admin_view_prices(update, context)
-    elif query.data == "admin_approved_users":
-        await admin_approved_users_list(update, context)
-    elif query.data == "admin_all_users":
-        await admin_all_users_list(update, context)
-    elif query.data.startswith("admin_user_details_"):
-        await admin_user_details(update, context)
-    elif query.data.startswith("admin_approve_user_"):
-        await admin_approve_user_from_details(update, context)
-    elif query.data.startswith("admin_disapprove_user_"):
-        await admin_disapprove_user_from_details(update, context)
-    elif query.data == "admin_approve_user":
-        await admin_approve_user_menu(update, context)
-    elif query.data == "admin_approve_user_paginated":
-        await admin_approve_user_paginated(update, context)
-    elif query.data.startswith("admin_approve_paginated_"):
-        page = int(query.data.split("_")[-1])
-        await admin_approve_user_paginated(update, context, page=page)
-    elif query.data.startswith("admin_select_plan_"):
-        await admin_select_plan_for_user(update, context)
-    elif query.data.startswith("admin_approve_with_plan_"):
-        await admin_approve_with_plan(update, context)
-    elif query.data == "admin_disapprove_user":
-        await admin_disapprove_user_menu(update, context)
-    elif query.data == "admin_broadcast_all":
-        await admin_broadcast_all_menu(update, context)
-    elif query.data == "admin_broadcast_approved":
-        await admin_broadcast_approved_menu(update, context)
-    elif query.data == "admin_sync_files":
-        await admin_sync_files_menu(update, context)
-    elif query.data == "admin_cleanup_expired":
-        await admin_cleanup_expired_menu(update, context)
-    elif query.data == "admin_export_data":
-        await admin_export_data_menu(update, context)
-    elif query.data == "admin_change_rate_limit":
-        await admin_change_rate_limit_menu(update, context)
-    elif query.data == "admin_back":
-        await admin_main_menu(update, context)
+    # Admin inline menu actions
+    if query.data.startswith("admin_"):
+        if query.from_user.id != ADMIN_ID:
+            await query.edit_message_text(
+                get_text(query.from_user.id, "unauthorized")
+            )
+            return
 
-# --- Admin Command Handlers ---
+        data = query.data
 
-async def approve(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin command to approve a user for a specific duration."""
+        if data == "admin_list_approved":
+            if not approved_users:
+                await query.edit_message_text(
+                    get_text(query.from_user.id, "no_approved_users")
+                )
+                return
+
+            keyboard: list[list[InlineKeyboardButton]] = []
+            for uid, _ in approved_users.items():
+                user_info = all_users.get(str(uid), {})
+                name = user_info.get("first_name", "Unknown")
+                if uid == ADMIN_ID:
+                    label = f"👑 {name} (Admin)"
+                else:
+                    label = f"👤 {name} ({uid})"
+                keyboard.append(
+                    [
+                        InlineKeyboardButton(
+                            label,
+                            callback_data=f"admin_user_details_approved_{uid}",
+                        )
+                    ]
+                )
+
+            keyboard.append(
+                [InlineKeyboardButton("🔙 Back", callback_data="admin_open_panel")]
+            )
+
+            text = (
+                get_text(query.from_user.id, "approved_users")
+                + "\n\nTap a user to view details."
+            )
+            await query.edit_message_text(
+                text, reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            return
+
+        if data == "admin_list_all":
+            if not all_users:
+                await query.edit_message_text(
+                    get_text(query.from_user.id, "no_users")
+                )
+                return
+
+            keyboard: list[list[InlineKeyboardButton]] = []
+            for uid, user_data in all_users.items():
+                name = user_data.get("first_name", "Unknown")
+                if uid == str(ADMIN_ID):
+                    label = f"👑 {name} (Admin)"
+                elif int(uid) in approved_users:
+                    label = f"✅ {name} ({uid})"
+                else:
+                    label = f"👤 {name} ({uid})"
+                keyboard.append(
+                    [
+                        InlineKeyboardButton(
+                            label,
+                            callback_data=f"admin_user_details_all_{uid}",
+                        )
+                    ]
+                )
+
+            keyboard.append(
+                [InlineKeyboardButton("🔙 Back", callback_data="admin_open_panel")]
+            )
+
+            text = (
+                get_text(
+                    query.from_user.id, "all_users", total_users=len(all_users)
+                )
+                + "\n\nTap a user to view details."
+            )
+            await query.edit_message_text(
+                text, reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            return
+
+        if data.startswith("admin_user_details_"):
+            # Show per-user details (plan, expiry, total checked)
+            if data.startswith("admin_user_details_approved_"):
+                user_source = "approved"
+                prefix = "admin_user_details_approved_"
+            else:
+                user_source = "all"
+                prefix = "admin_user_details_all_"
+
+            user_id_str = data.replace(prefix, "")
+            try:
+                uid = int(user_id_str)
+            except ValueError:
+                await query.edit_message_text("Invalid user id.")
+                return
+
+            user_data = all_users.get(user_id_str, {})
+            name = html.escape(user_data.get("first_name", "Unknown"))
+            raw_username = user_data.get("username")
+            if raw_username:
+                username = "@" + html.escape(raw_username)
+            else:
+                username = "None"
+            numbers_checked = user_data.get("numbers_checked", 0)
+            language = user_data.get("language", get_user_language(uid))
+
+            is_approved = uid in approved_users
+            if is_approved:
+                expiry = approved_users.get(uid)
+                if expiry is None:
+                    expiry_info = "Permanent access"
+                else:
+                    expiry_info = expiry.strftime("%Y-%m-%d %H:%M:%S UTC")
+            else:
+                expiry_info = "Not approved"
+
+            plan_duration = user_data.get("plan_duration")
+            plan_bdt = user_data.get("plan_price_bdt")
+            plan_usd = user_data.get("plan_price_usd")
+            if plan_duration:
+                if plan_bdt is not None and plan_usd is not None:
+                    plan_info = f"{plan_duration} - {plan_bdt} BDT / {plan_usd} USD"
+                else:
+                    plan_info = plan_duration
+            else:
+                plan_info = "Not set"
+
+            details = (
+                "👤 User Details\n\n"
+                f"ID: {uid}\n"
+                f"Name: {name}\n"
+                f"Username: {username}\n"
+                f"Language: {language}\n"
+                f"Numbers checked (last 24h): {numbers_checked}\n"
+                f"Approved: {'Yes' if is_approved else 'No'}\n"
+                f"Expiry: {expiry_info}\n"
+                f"Plan: {plan_info}\n"
+            )
+
+            back_cb = "admin_list_approved" if user_source == "approved" else "admin_list_all"
+            keyboard = [[InlineKeyboardButton("🔙 Back", callback_data=back_cb)]]
+
+            await query.edit_message_text(
+                details,
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+            )
+            return
+
+        if data == "admin_help_approve":
+            back_kb = InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 Back", callback_data="admin_open_panel")]]
+            )
+            await query.edit_message_text(
+                get_text(query.from_user.id, "usage_approve"),
+                parse_mode="HTML",
+                reply_markup=back_kb,
+            )
+            return
+
+        if data == "admin_help_disapprove":
+            back_kb = InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 Back", callback_data="admin_open_panel")]]
+            )
+            await query.edit_message_text(
+                get_text(query.from_user.id, "usage_disapprove"),
+                parse_mode="HTML",
+                reply_markup=back_kb,
+            )
+            return
+
+        if data == "admin_help_broadcast":
+            back_kb = InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 Back", callback_data="admin_open_panel")]]
+            )
+            await query.edit_message_text(
+                get_text(query.from_user.id, "usage_broadcast"),
+                parse_mode="HTML",
+                reply_markup=back_kb,
+            )
+            return
+
+        if data == "admin_help_broadcast_approved":
+            back_kb = InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 Back", callback_data="admin_open_panel")]]
+            )
+            await query.edit_message_text(
+                get_text(query.from_user.id, "usage_broadcast_approved"),
+                parse_mode="HTML",
+                reply_markup=back_kb,
+            )
+            return
+
+        if data == "admin_help_setratelimit":
+            back_kb = InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 Back", callback_data="admin_open_panel")]]
+            )
+            await query.edit_message_text(
+                get_text(query.from_user.id, "usage_setratelimit"),
+                parse_mode="HTML",
+                reply_markup=back_kb,
+            )
+            return
+
+        if data == "admin_do_sync":
+            await query.edit_message_text(get_text(query.from_user.id, "syncing"))
+            await load_users_from_file()
+            await load_referral_data_from_file()
+            await load_all_users_from_file()
+            await load_price_list_from_file()
+            await load_user_settings_from_file()
+            await load_config_from_file()
+
+            ok_users = await save_users_to_file()
+            ok_ref = await save_referral_data_to_file()
+            ok_all = await save_all_users_to_file()
+            ok_price = await save_price_list_to_file()
+            ok_settings = await save_user_settings_to_file()
+            ok_config = await save_config_to_file()
+
+            back_kb = InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 Back", callback_data="admin_open_panel")]]
+            )
+
+            if all([ok_users, ok_ref, ok_all, ok_price, ok_settings, ok_config]):
+                await query.edit_message_text(
+                    get_text(query.from_user.id, "sync_success"),
+                    reply_markup=back_kb,
+                )
+            else:
+                await query.edit_message_text(
+                    get_text(query.from_user.id, "sync_failed"),
+                    reply_markup=back_kb,
+                )
+            return
+
+        if data == "admin_do_cleanup":
+            await query.edit_message_text(
+                get_text(query.from_user.id, "cleanup_expired")
+            )
+            removed = await cleanup_expired_users()
+            back_kb = InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 Back", callback_data="admin_open_panel")]]
+            )
+            await query.edit_message_text(
+                get_text(query.from_user.id, "cleanup_complete", count=removed),
+                reply_markup=back_kb,
+            )
+            return
+
+        if data == "admin_do_export":
+            await query.edit_message_text(
+                get_text(query.from_user.id, "export_data_msg")
+            )
+            zip_buffer = await export_bot_data()
+            back_kb = InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 Back", callback_data="admin_open_panel")]]
+            )
+            if zip_buffer:
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = f"bot_data_{ts}.zip"
+                await context.bot.send_document(
+                    chat_id=query.message.chat_id,
+                    document=zip_buffer,
+                    filename=filename,
+                    caption=get_text(query.from_user.id, "export_complete"),
+                )
+                await query.edit_message_text(
+                    get_text(query.from_user.id, "export_complete"),
+                    reply_markup=back_kb,
+                )
+            else:
+                await query.edit_message_text(
+                    "❌ Failed to export data. Please check the logs.",
+                    reply_markup=back_kb,
+                )
+            return
+
+        if data == "admin_show_pricelist":
+            text = get_text(query.from_user.id, "current_price_list")
+            for _, value in price_list.items():
+                text += (
+                    f"🔹 <b>{value['duration']}</b>: "
+                    f"{value['price_bdt']} BDT / {value['price_usd']} USD\n"
+                )
+            back_kb = InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 Back", callback_data="admin_open_panel")]]
+            )
+            await query.edit_message_text(text, parse_mode="HTML", reply_markup=back_kb)
+            return
+
+    return
+
+
+async def approve(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text(get_text(update.effective_user.id, "unauthorized"))
+        await update.message.reply_text(
+            get_text(update.effective_user.id, "unauthorized")
+        )
         return
 
     if len(context.args) != 3:
-        await update.message.reply_html(get_text(update.effective_user.id, "usage_approve"))
+        await update.message.reply_html(
+            get_text(update.effective_user.id, "usage_approve")
+        )
         return
 
     try:
@@ -2132,7 +2343,6 @@ async def approve(update: Update, context: ContextTypes.DEFAULT_TYPE):
         amount = int(context.args[1])
         unit = context.args[2].lower()
 
-        # Check if user is already approved
         if user_id_to_approve in approved_users:
             expiry_date = approved_users[user_id_to_approve]
             if expiry_date is None:
@@ -2141,34 +2351,63 @@ async def approve(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         update.effective_user.id,
                         "user_already_approved",
                         uid=user_id_to_approve,
-                        expiry_date="Permanent"
+                        expiry_date="Permanent",
                     )
                 )
                 return
             else:
-                expiry_str = expiry_date.strftime('%Y-%m-%d %H:%M:%S UTC')
+                expiry_str = expiry_date.strftime("%Y-%m-%d %H:%M:%S UTC")
                 await update.message.reply_html(
                     get_text(
                         update.effective_user.id,
                         "user_already_approved",
                         uid=user_id_to_approve,
-                        expiry_date=expiry_str
+                        expiry_date=expiry_str,
                     )
                 )
                 return
 
-        if unit.startswith('hour'):
+        if unit.startswith("hour"):
             expiry_date = datetime.now(timezone.utc) + timedelta(hours=amount)
-        elif unit.startswith('day'):
+        elif unit.startswith("day"):
             expiry_date = datetime.now(timezone.utc) + timedelta(days=amount)
-        elif unit.startswith('month'):
+        elif unit.startswith("month"):
             expiry_date = datetime.now(timezone.utc) + timedelta(days=amount * 30)
         else:
-            await update.message.reply_text(get_text(update.effective_user.id, "invalid_unit"))
+            await update.message.reply_text(
+                get_text(update.effective_user.id, "invalid_unit")
+            )
             return
 
+        # Derive and store plan info (duration and price, if from price_list)
+        plan_duration = f"{amount} {unit}"
+        plan_price_bdt = None
+        plan_price_usd = None
+
+        if unit.startswith("day"):
+            for value in price_list.values():
+                try:
+                    num_str, unit_str = value["duration"].split()[:2]
+                    num_days = int(num_str)
+                except Exception:
+                    continue
+                if num_days == amount and unit_str.lower().startswith("day"):
+                    plan_duration = value["duration"]
+                    plan_price_bdt = value.get("price_bdt")
+                    plan_price_usd = value.get("price_usd")
+                    break
+
+        user_id_str = str(user_id_to_approve)
+        user_rec = all_users.setdefault(user_id_str, {})
+        user_rec["plan_duration"] = plan_duration
+        if plan_price_bdt is not None:
+            user_rec["plan_price_bdt"] = plan_price_bdt
+        if plan_price_usd is not None:
+            user_rec["plan_price_usd"] = plan_price_usd
+        await save_all_users_to_file()
+
         approved_users[user_id_to_approve] = expiry_date
-        expiry_str = expiry_date.strftime('%Y-%m-%d %H:%M:%S UTC')
+        expiry_str = expiry_date.strftime("%Y-%m-%d %H:%M:%S UTC")
 
         await save_users_to_file()
 
@@ -2177,12 +2416,10 @@ async def approve(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 update.effective_user.id,
                 "user_approved",
                 uid=user_id_to_approve,
-                expiry_date=expiry_str
+                expiry_date=expiry_str,
             )
         )
 
-        # নোটিফিকেশন পাঠানোর আগে চেক করুন যে ইউজারটি বটের সাথে ইন্টারঅ্যাক্ট করেছে কিনা
-        user_id_str = str(user_id_to_approve)
         if user_id_str in all_users:
             await send_user_notification(
                 context,
@@ -2190,82 +2427,96 @@ async def approve(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 get_text(
                     user_id_to_approve,
                     "access_approved",
-                    expiry_date=expiry_str
-                )
+                    expiry_date=expiry_str,
+                ),
             )
-
     except (ValueError, IndexError):
         await update.message.reply_html(
             get_text(
                 update.effective_user.id,
                 "invalid_input",
-                format=get_text(update.effective_user.id, "usage_approve")
+                format=get_text(update.effective_user.id, "usage_approve"),
             )
         )
 
-async def disapprove(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin command to disapprove a user."""
+
+async def disapprove(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text(get_text(update.effective_user.id, "unauthorized"))
+        await update.message.reply_text(
+            get_text(update.effective_user.id, "unauthorized")
+        )
         return
 
     if not context.args:
-        await update.message.reply_html(get_text(update.effective_user.id, "usage_disapprove"))
+        await update.message.reply_html(
+            get_text(update.effective_user.id, "usage_disapprove")
+        )
         return
 
     try:
         user_id_to_disapprove = int(context.args[0])
         if user_id_to_disapprove == ADMIN_ID:
-            await update.message.reply_text(get_text(update.effective_user.id, "cannot_disapprove_admin"))
+            await update.message.reply_text(
+                get_text(update.effective_user.id, "cannot_disapprove_admin")
+            )
             return
 
         if user_id_to_disapprove in approved_users:
             del approved_users[user_id_to_disapprove]
-
             await save_users_to_file()
 
             await update.message.reply_html(
                 get_text(
                     update.effective_user.id,
                     "user_disapproved",
-                    uid=user_id_to_disapprove
+                    uid=user_id_to_disapprove,
                 )
             )
 
-            # নোটিফিকেশন পাঠানোর আগে চেক করুন যে ইউজারটি বটের সাথে ইন্টারঅ্যাক্ট করেছে কিনা
             user_id_str = str(user_id_to_disapprove)
             if user_id_str in all_users:
                 await send_user_notification(
                     context,
                     user_id_to_disapprove,
-                    get_text(user_id_to_disapprove, "access_revoked")
+                    get_text(user_id_to_disapprove, "access_revoked"),
                 )
         else:
             await update.message.reply_html(
                 get_text(
                     update.effective_user.id,
                     "user_not_approved",
-                    uid=user_id_to_disapprove
+                    uid=user_id_to_disapprove,
                 )
             )
-
     except (ValueError, IndexError):
-        await update.message.reply_html(get_text(update.effective_user.id, "invalid_user_id"))
+        await update.message.reply_html(
+            get_text(
+                update.effective_user.id,
+                "invalid_input",
+                format=get_text(update.effective_user.id, "usage_disapprove"),
+            )
+        )
 
-async def set_rate_limit(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin command to change the rate limit."""
+
+async def set_rate_limit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text(get_text(update.effective_user.id, "unauthorized"))
+        await update.message.reply_text(
+            get_text(update.effective_user.id, "unauthorized")
+        )
         return
 
     if not context.args:
-        await update.message.reply_html(get_text(update.effective_user.id, "usage_setratelimit"))
+        await update.message.reply_html(
+            get_text(update.effective_user.id, "usage_setratelimit")
+        )
         return
 
     try:
         seconds = int(context.args[0])
-        if seconds < 10: # Minimum 10 seconds
-            await update.message.reply_text("❌ Rate limit must be at least 10 seconds.")
+        if seconds < 10:
+            await update.message.reply_text(
+                "❌ Rate limit must be at least 10 seconds."
+            )
             return
 
         config_data["rate_limit_seconds"] = seconds
@@ -2274,7 +2525,10 @@ async def set_rate_limit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         minutes = seconds // 60
         secs = seconds % 60
         if minutes > 0:
-            time_str = f"{minutes} minute{'s' if minutes > 1 else ''} and {secs} second{'s' if secs != 1 else ''}"
+            time_str = (
+                f"{minutes} minute{'s' if minutes > 1 else ''} and "
+                f"{secs} second{'s' if secs != 1 else ''}"
+            )
         else:
             time_str = f"{secs} second{'s' if secs != 1 else ''}"
 
@@ -2283,150 +2537,184 @@ async def set_rate_limit(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 update.effective_user.id,
                 "rate_limit_updated",
                 seconds=seconds,
-                time_str=time_str
+                time_str=time_str,
             )
         )
-
     except (ValueError, IndexError):
         await update.message.reply_html(
             get_text(
                 update.effective_user.id,
                 "invalid_input",
-                format=get_text(update.effective_user.id, "usage_setratelimit")
+                format=get_text(update.effective_user.id, "usage_setratelimit"),
             )
         )
 
-async def cleanup_expired(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin command to cleanup expired users."""
+
+async def cleanup_expired(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text(get_text(update.effective_user.id, "unauthorized"))
+        await update.message.reply_text(
+            get_text(update.effective_user.id, "unauthorized")
+        )
         return
 
-    await update.message.reply_text(get_text(update.effective_user.id, "cleanup_expired"))
-    
-    # Run the cleanup function
-    removed_count = await cleanup_expired_users()
-    
+    await update.message.reply_text(
+        get_text(update.effective_user.id, "cleanup_expired")
+    )
+    removed = await cleanup_expired_users()
     await update.message.reply_html(
-        get_text(update.effective_user.id, "cleanup_complete", count=removed_count)
+        get_text(update.effective_user.id, "cleanup_complete", count=removed)
     )
 
-async def export_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin command to export bot data."""
+
+async def export_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text(get_text(update.effective_user.id, "unauthorized"))
+        await update.message.reply_text(
+            get_text(update.effective_user.id, "unauthorized")
+        )
         return
 
-    await update.message.reply_text(get_text(update.effective_user.id, "export_data_msg"))
-    
-    # Export the data
+    await update.message.reply_text(
+        get_text(update.effective_user.id, "export_data_msg")
+    )
     zip_buffer = await export_bot_data()
-    
     if zip_buffer:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"bot_data_{timestamp}.zip"
-        
-        # Send the zip file
         await context.bot.send_document(
             chat_id=update.effective_chat.id,
             document=zip_buffer,
             filename=filename,
-            caption=get_text(update.effective_user.id, "export_complete")
+            caption=get_text(update.effective_user.id, "export_complete"),
         )
     else:
-        await update.message.reply_text("❌ Failed to export data. Please check the logs.")
+        await update.message.reply_text(
+            "❌ Failed to export data. Please check the logs."
+        )
 
-async def list_approved(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin command to list all approved users and their expiry dates."""
+
+async def list_approved(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text(get_text(update.effective_user.id, "unauthorized"))
+        await update.message.reply_text(
+            get_text(update.effective_user.id, "unauthorized")
+        )
         return
 
     if not approved_users:
-        await update.message.reply_text(get_text(update.effective_user.id, "no_approved_users"))
+        await update.message.reply_text(
+            get_text(update.effective_user.id, "no_approved_users")
+        )
         return
 
-    response_text = get_text(update.effective_user.id, "approved_users") + "\n\n"
+    text = get_text(update.effective_user.id, "approved_users") + "\n\n"
     for uid, expiry in approved_users.items():
         if uid == ADMIN_ID:
-            response_text += f"👑 <code>{uid}</code> (Admin - Permanent)\n"
+            text += f"👑 <code>{uid}</code> (Admin - Permanent)\n"
         else:
             if expiry is None:
-                response_text += f"👤 <code>{uid}</code> - Permanent Access\n"
+                text += f"👤 <code>{uid}</code> - Permanent Access\n"
             else:
-                expiry_str = expiry.strftime('%Y-%m-%d %H:%M:%S UTC')
-                response_text += f"👤 <code>{uid}</code> - Expires: <b>{expiry_str}</b>\n"
+                expiry_str = expiry.strftime("%Y-%m-%d %H:%M:%S UTC")
+                text += (
+                    f"👤 <code>{uid}</code> - Expires: <b>{expiry_str}</b>\n"
+                )
 
-    await update.message.reply_html(response_text)
+    await update.message.reply_html(text)
 
-async def list_all_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin command to list all users who have interacted with the bot."""
+
+async def list_all_users(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text(get_text(update.effective_user.id, "unauthorized"))
+        await update.message.reply_text(
+            get_text(update.effective_user.id, "unauthorized")
+        )
         return
 
     if not all_users:
-        await update.message.reply_text(get_text(update.effective_user.id, "no_users"))
+        await update.message.reply_text(
+            get_text(update.effective_user.id, "no_users")
+        )
         return
 
-    response_text = get_text(update.effective_user.id, "all_users", total_users=len(all_users)) + "\n\n"
+    text = (
+        get_text(
+            update.effective_user.id,
+            "all_users",
+            total_users=len(all_users),
+        )
+        + "\n\n"
+    )
 
     for uid, user_data in all_users.items():
-        # Escape HTML special characters in user data
         name = html.escape(user_data.get("first_name", "Unknown"))
         username = html.escape(user_data.get("username", "No username"))
-        last_interaction = user_data.get("last_interaction", "Unknown")
         numbers_checked = user_data.get("numbers_checked", 0)
 
         if uid == str(ADMIN_ID):
-            response_text += f"👑 <code>{uid}</code> - {name} (@{username}) - Admin - Checked: {numbers_checked}\n"
+            text += (
+                f"👑 <code>{uid}</code> - {name} (@{username}) - "
+                f"Admin - Checked: {numbers_checked}\n"
+            )
         elif int(uid) in approved_users:
-            expiry_date = approved_users[int(uid)]
-            if expiry_date is None:
-                response_text += f"✅ <code>{uid}</code> - {name} (@{username}) - Permanent access - Checked: {numbers_checked}\n"
+            expiry = approved_users[int(uid)]
+            if expiry is None:
+                text += (
+                    f"✅ <code>{uid}</code> - {name} (@{username}) - "
+                    f"Permanent access - Checked: {numbers_checked}\n"
+                )
             else:
-                expiry_str = expiry_date.strftime('%Y-%m-%d %H:%M:%S UTC')
-                response_text += f"✅ <code>{uid}</code> - {name} (@{username}) - Approved until {expiry_str} - Checked: {numbers_checked}\n"
+                expiry_str = expiry.strftime("%Y-%m-%d %H:%M:%S UTC")
+                text += (
+                    f"✅ <code>{uid}</code> - {name} (@{username}) - "
+                    f"Approved until {expiry_str} - Checked: {numbers_checked}\n"
+                )
         else:
-            response_text += f"👤 <code>{uid}</code> - {name} (@{username}) - Not approved - Checked: {numbers_checked}\n"
+            text += (
+                f"👤 <code>{uid}</code> - {name} (@{username}) - "
+                f"Not approved - Checked: {numbers_checked}\n"
+            )
 
-    if len(response_text) > 4000:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"all_users_{timestamp}.txt"
-
-        async with aiofiles.open(filename, 'w', encoding='utf-8') as f:
-            await f.write(response_text)
-
+    if len(text) > 4000:
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"all_users_{ts}.txt"
+        async with aiofiles.open(filename, "w", encoding="utf-8") as f:
+            await f.write(text)
         await context.bot.send_document(
             chat_id=update.effective_chat.id,
-            document=open(filename, 'rb'),
-            caption=f"List of all users who have interacted with the bot."
+            document=open(filename, "rb"),
+            caption="List of all users who have interacted with the bot.",
         )
-
         os.remove(filename)
     else:
-        await update.message.reply_html(response_text)
+        await update.message.reply_html(text)
 
-async def show_price_list_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Shows the current price list to the admin."""
+
+async def show_price_list_admin(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
     if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text(get_text(update.effective_user.id, "unauthorized"))
+        await update.message.reply_text(
+            get_text(update.effective_user.id, "unauthorized")
+        )
         return
 
-    price_text = get_text(update.effective_user.id, "current_price_list")
+    text = get_text(update.effective_user.id, "current_price_list")
+    for _, value in price_list.items():
+        text += (
+            f"🔹 <b>{value['duration']}</b>: "
+            f"{value['price_bdt']} BDT / {value['price_usd']} USD\n"
+        )
+    await update.message.reply_html(text)
 
-    for key, value in price_list.items():
-        price_text += f"🔹 <b>{value['duration']}</b>: {value['price_bdt']} BDT / {value['price_usd']} USD\n"
 
-    await update.message.reply_html(price_text)
-
-async def sync_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin command to sync data files."""
+async def sync_files(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text(get_text(update.effective_user.id, "unauthorized"))
+        await update.message.reply_text(
+            get_text(update.effective_user.id, "unauthorized")
+        )
         return
 
-    await update.message.reply_text(get_text(update.effective_user.id, "syncing"))
+    await update.message.reply_text(
+        get_text(update.effective_user.id, "syncing")
+    )
 
     await load_users_from_file()
     await load_referral_data_from_file()
@@ -2435,26 +2723,34 @@ async def sync_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await load_user_settings_from_file()
     await load_config_from_file()
 
-    success_users = await save_users_to_file()
-    success_referral = await save_referral_data_to_file()
-    success_all_users = await save_all_users_to_file()
-    success_price = await save_price_list_to_file()
-    success_settings = await save_user_settings_to_file()
-    success_config = await save_config_to_file()
+    ok_users = await save_users_to_file()
+    ok_ref = await save_referral_data_to_file()
+    ok_all = await save_all_users_to_file()
+    ok_price = await save_price_list_to_file()
+    ok_settings = await save_user_settings_to_file()
+    ok_config = await save_config_to_file()
 
-    if success_users and success_referral and success_all_users and success_price and success_settings and success_config:
-        await update.message.reply_text(get_text(update.effective_user.id, "sync_success"))
+    if all([ok_users, ok_ref, ok_all, ok_price, ok_settings, ok_config]):
+        await update.message.reply_text(
+            get_text(update.effective_user.id, "sync_success")
+        )
     else:
-        await update.message.reply_text(get_text(update.effective_user.id, "sync_failed"))
+        await update.message.reply_text(
+            get_text(update.effective_user.id, "sync_failed")
+        )
 
-async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin command to broadcast a message to all users."""
+
+async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text(get_text(update.effective_user.id, "unauthorized"))
+        await update.message.reply_text(
+            get_text(update.effective_user.id, "unauthorized")
+        )
         return
 
     if not context.args:
-        await update.message.reply_html(get_text(update.effective_user.id, "usage_broadcast"))
+        await update.message.reply_html(
+            get_text(update.effective_user.id, "usage_broadcast")
+        )
         return
 
     message_to_broadcast = " ".join(context.args)
@@ -2463,10 +2759,14 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     for user_id in all_users.keys():
         try:
-            await context.bot.send_message(chat_id=int(user_id), text=message_to_broadcast, parse_mode='HTML')
+            await context.bot.send_message(
+                chat_id=int(user_id),
+                text=message_to_broadcast,
+                parse_mode="HTML",
+            )
             success_count += 1
         except Exception as e:
-            logger.error(f"Failed to broadcast to {user_id}: {e}")
+            logger.error("Failed to broadcast to %s: %s", user_id, e)
             fail_count += 1
 
     await update.message.reply_html(
@@ -2474,18 +2774,22 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
             update.effective_user.id,
             "broadcast_complete",
             success_count=success_count,
-            fail_count=fail_count
+            fail_count=fail_count,
         )
     )
 
-async def broadcast_approved(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin command to broadcast a message to approved users only."""
+
+async def broadcast_approved(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text(get_text(update.effective_user.id, "unauthorized"))
+        await update.message.reply_text(
+            get_text(update.effective_user.id, "unauthorized")
+        )
         return
 
     if not context.args:
-        await update.message.reply_html(get_text(update.effective_user.id, "usage_broadcast_approved"))
+        await update.message.reply_html(
+            get_text(update.effective_user.id, "usage_broadcast_approved")
+        )
         return
 
     message_to_broadcast = " ".join(context.args)
@@ -2494,10 +2798,12 @@ async def broadcast_approved(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     for user_id in approved_users.keys():
         try:
-            await context.bot.send_message(chat_id=user_id, text=message_to_broadcast, parse_mode='HTML')
+            await context.bot.send_message(
+                chat_id=user_id, text=message_to_broadcast, parse_mode="HTML"
+            )
             success_count += 1
         except Exception as e:
-            logger.error(f"Failed to broadcast to {user_id}: {e}")
+            logger.error("Failed to broadcast to %s: %s", user_id, e)
             fail_count += 1
 
     await update.message.reply_html(
@@ -2505,24 +2811,21 @@ async def broadcast_approved(update: Update, context: ContextTypes.DEFAULT_TYPE)
             update.effective_user.id,
             "broadcast_approved_complete",
             success_count=success_count,
-            fail_count=fail_count
+            fail_count=fail_count,
         )
     )
 
-
-# Function to remove HTML tags from text
-def remove_html_tags(text):
-    """Remove HTML tags from a string."""
-    clean = re.compile('<.*?>')
-    return re.sub(clean, '', text)
+# ---------------------------------------------------------------------------
+# MESSAGE HANDLER
+# ---------------------------------------------------------------------------
 
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles the message containing phone numbers."""
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     user_id = user.id
 
     await track_user(user, update)
+    await ensure_daily_reset()
 
     user_data = {
         "id": user.id,
@@ -2533,64 +2836,55 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "is_bot": user.is_bot,
         "last_interaction": datetime.now().isoformat(),
         "approved": user_id in approved_users,
-        "language": get_user_language(user_id)
+        "language": get_user_language(user_id),
     }
-
     if user_id in approved_users and approved_users[user_id] is not None:
         user_data["expiry_date"] = approved_users[user_id].isoformat()
 
     await save_user_details_to_file(user_id, user_data)
+    await save_user_to_db(user_id, user_data)
 
     if not is_user_approved(user_id, context):
-        referral_code = await get_or_create_referral_code(user_id)
-
-        referral_count = 0
-        if str(user_id) in referral_data:
-            referral_count = len(referral_data[str(user_id)]["referred_users"])
-
-        keyboard = [
-            [InlineKeyboardButton(get_text(user_id, "buy_online"), callback_data="buy_online")],
-            [InlineKeyboardButton(get_text(user_id, "refer_earn"), callback_data="refer")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
-        await update.message.reply_html(
-            get_text(user_id, "access_denied", uid=user_id),
-            reply_markup=reply_markup
-        )
+        await handle_unauthorized_user(update, context)
         return
 
-    # Check rate limit (skip for admin)
     if user_id != ADMIN_ID:
-        is_allowed, remaining_time = check_rate_limit(user_id)
-        if not is_allowed:
-            rate_limit_seconds = config_data.get("rate_limit_seconds", DEFAULT_RATE_LIMIT_SECONDS)
+        allowed, remaining = check_rate_limit(user_id)
+        if not allowed:
+            rate_limit_seconds = config_data.get(
+                "rate_limit_seconds", DEFAULT_RATE_LIMIT_SECONDS
+            )
             await update.message.reply_html(
-                get_text(user_id, "rate_limit", remaining_time=remaining_time, time_limit=rate_limit_seconds)
+                get_text(
+                    user_id,
+                    "rate_limit",
+                    remaining_time=remaining,
+                    time_limit=rate_limit_seconds,
+                )
             )
             return
 
-    processing_message = await update.message.reply_text(get_text(user_id, "processing"))
+    processing_message = await update.message.reply_text(
+        get_text(user_id, "processing")
+    )
 
-    phone_numbers = [line.strip().lstrip('- ').strip() for line in update.message.text.splitlines() if line.strip().lstrip('- ').strip()]
-
+    phone_numbers = [
+        line.strip().lstrip("- ").strip()
+        for line in update.message.text.splitlines()
+        if line.strip().lstrip("- ").strip()
+    ]
     if not phone_numbers:
         await processing_message.edit_text(get_text(user_id, "no_numbers"))
         return
 
-    found_numbers = []
-    not_found_numbers = []
-    error_numbers = []
+    found_numbers: list[str] = []
+    not_found_numbers: list[str] = []
+    error_numbers: list[tuple[str, str]] = []
 
-    # --- REFACTORED with httpx and asyncio.gather ---
-    # Create an httpx.AsyncClient to reuse connections
     async with httpx.AsyncClient() as client:
-        # Create a list of tasks
-        tasks = [check_facebook_number(client, number) for number in phone_numbers]
-        # Run all tasks concurrently
+        tasks = [check_facebook_number(client, n) for n in phone_numbers]
         results = await asyncio.gather(*tasks)
 
-    # Process the results
     for number, status in zip(phone_numbers, results):
         if status == "Found":
             found_numbers.append(number)
@@ -2599,145 +2893,147 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             error_numbers.append((number, status))
 
-    # Update numbers checked count
     user_id_str = str(user_id)
     if user_id_str in all_users:
-        all_users[user_id_str]["numbers_checked"] = all_users[user_id_str].get("numbers_checked", 0) + len(phone_numbers)
+        all_users[user_id_str]["numbers_checked"] = (
+            all_users[user_id_str].get("numbers_checked", 0) + len(phone_numbers)
+        )
         await save_all_users_to_file()
 
     response_text = get_text(user_id, "check_complete")
 
     if found_numbers:
         response_text += get_text(user_id, "found_numbers")
-        for number in found_numbers:
-            response_text += f"  <code>{number}</code>\n"
+        for n in found_numbers:
+            response_text += f"  <code>{n}</code>\n"
         response_text += "\n"
-
     if not_found_numbers:
         response_text += get_text(user_id, "not_found_numbers")
-        for number in not_found_numbers:
-            response_text += f"  <code>{number}</code>\n"
+        for n in not_found_numbers:
+            response_text += f"  <code>{n}</code>\n"
         response_text += "\n"
-
     if error_numbers:
         response_text += get_text(user_id, "errors_unknown")
-        for number, error in error_numbers:
-            response_text += f"  <code>{number}</code>: {error}\n"
+        for n, err in error_numbers:
+            response_text += f"  <code>{n}</code>: {err}\n"
         response_text += "\n"
 
-    if not found_numbers and not not_found_numbers and not error_numbers:
+    if not (found_numbers or not_found_numbers or error_numbers):
         response_text = get_text(user_id, "no_valid_numbers")
 
-    # FIX: Corrected logic for sending long results as a file
     if len(response_text) > 3000 or len(phone_numbers) > 50:
         try:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"results_{timestamp}.txt"
-
-            # Remove HTML tags from the content when writing to file
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"results_{ts}.txt"
             clean_text = remove_html_tags(response_text)
-
-            # REFACTORED: Use aiofiles to write the file
-            async with aiofiles.open(filename, 'w', encoding='utf-8') as f:
+            async with aiofiles.open(filename, "w", encoding="utf-8") as f:
                 await f.write(clean_text)
 
-            caption = f"✅ Check Complete!\n\nFound: {len(found_numbers)}\nNot Found: {len(not_found_numbers)}\nErrors: {len(error_numbers)}"
-            
-            # Send the file
-            with open(filename, 'rb') as f_sync:
+            caption = (
+                f"✅ Check Complete!\n\nFound: {len(found_numbers)}\n"
+                f"Not Found: {len(not_found_numbers)}\nErrors: {len(error_numbers)}"
+            )
+            with open(filename, "rb") as f_sync:
                 await context.bot.send_document(
                     chat_id=update.effective_chat.id,
                     document=f_sync,
-                    caption=caption
+                    caption=caption,
                 )
-
             os.remove(filename)
-
-            # Delete the processing message
             await processing_message.delete()
-            return # Important: exit the function here
-
+            return
         except Exception as e:
-            logger.error(f"Failed to create or send file: {e}")
-            # Don't delete the message if file sending fails, so we can edit it
-            await processing_message.edit_text("❌ An error occurred while creating the result file. Please try again.")
+            logger.error("Failed to create or send file: %s", e)
+            await processing_message.edit_text(
+                "❌ An error occurred while creating the result file. Please try again."
+            )
             return
     else:
-        # If we reach here, the list is short enough for a message
         try:
-            await processing_message.edit_text(response_text, parse_mode='HTML')
+            await processing_message.edit_text(response_text, parse_mode="HTML")
         except BadRequest as e:
             if "message is not modified" in str(e):
-                pass # No need to do anything
+                pass
             else:
-                logger.error(f"Failed to edit message: {e}")
-                await processing_message.edit_text("❌ An error occurred while formatting the results. Please check the logs.")
+                logger.error("Failed to edit message: %s", e)
+                await processing_message.edit_text(
+                    "❌ An error occurred while formatting the results. "
+                    "Please check the logs."
+                )
         except Exception as e:
-            logger.error(f"Failed to send message: {e}")
-            await processing_message.edit_text("❌ An error occurred while formatting the results. Please check the logs.")
+            logger.error("Failed to send message: %s", e)
+            await processing_message.edit_text(
+                "❌ An error occurred while formatting the results. "
+                "Please check the logs."
+            )
 
-# --- ERROR HANDLER ---
+
+async def handle_unauthorized_user(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    user = update.effective_user
+    user_id = user.id
+
+    _ = await get_or_create_referral_code(user_id)
+
+    keyboard = [
+        [InlineKeyboardButton(get_text(user_id, "buy_online"), callback_data="buy_online")],
+        [InlineKeyboardButton(get_text(user_id, "refer_earn"), callback_data="refer")],
+    ]
+    await update.message.reply_html(
+        get_text(user_id, "access_denied", uid=user_id),
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+# ---------------------------------------------------------------------------
+# ERROR HANDLER, STARTUP, MAIN
+# ---------------------------------------------------------------------------
+
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Log the error and send a telegram message to notify the admin."""
-    logger.error(f"Exception while handling an update: {context.error}")
-
+    logger.error("Exception while handling an update: %s", context.error)
     try:
-        if update and hasattr(update, 'effective_user'):
-            user_id = update.effective_user.id
+        if update and hasattr(update, "effective_user"):
+            user_id = update.effective_user.id  # type: ignore[attr-defined]
             await context.bot.send_message(
                 chat_id=user_id,
                 text="An error occurred. Please try again later.",
-                parse_mode='HTML'
+                parse_mode="HTML",
             )
     except Exception:
         pass
 
-async def load_all_data():
-    """Load all data files concurrently on startup."""
+
+async def load_all_data() -> None:
     await asyncio.gather(
         load_config_from_file(),
         load_users_from_file(),
         load_referral_data_from_file(),
         load_all_users_from_file(),
         load_price_list_from_file(),
-        load_user_settings_from_file()
+        load_user_settings_from_file(),
     )
-
-def main():
-    """Start the bot."""
-    # Create a new event loop for the main thread
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_closed():
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    
-    # For direct connection without proxy
+        await init_db()
+    except Exception as e:
+        logger.error("Error initialising MySQL database: %s", e)
+
+
+def main() -> None:
+    asyncio.run(load_all_data())
+    asyncio.run(cleanup_expired_users())
+
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
-    # Add error handler
     application.add_error_handler(error_handler)
 
-    # Load data from local files on startup (concurrently)
-    logger.info("Loading all data from files...")
-    loop.run_until_complete(load_all_data())
-    logger.info("Data loading complete.")
-    
-    # Clean up expired users on startup
-    logger.info("Cleaning up expired users...")
-    loop.run_until_complete(cleanup_expired_users())
-    logger.info("Cleanup complete.")
-
-    # on different commands - answer in Telegram
+    # Public commands
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("admin", admin_contact))
     application.add_handler(CommandHandler("cmd", show_admin_commands))
     application.add_handler(CommandHandler("referral", referral_status))
     application.add_handler(CommandHandler("price", show_price_list))
+    application.add_handler(CommandHandler("lang", change_language))
 
     # Admin commands
     application.add_handler(CommandHandler("approve", approve))
@@ -2752,18 +3048,17 @@ def main():
     application.add_handler(CommandHandler("export", export_data))
     application.add_handler(CommandHandler("setratelimit", set_rate_limit))
 
-    # Button callback handler
+    # Callback query handler (inline buttons)
     application.add_handler(CallbackQueryHandler(button_callback))
 
-    # on non command i.e message - handle the message
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    # Text messages handler
+    application.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
+    )
 
-    # Start the auto cleanup task
-    loop.create_task(auto_cleanup_task(application))
-
-    # Run the bot until the user presses Ctrl-C
     logger.info("Bot is starting...")
     application.run_polling()
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()
