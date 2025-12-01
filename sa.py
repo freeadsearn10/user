@@ -1499,9 +1499,9 @@ def fetch_latest_binance_payment_for_amount(
 
             text = subject + "\n" + body
 
-            # More tolerant regex for "Amount: 0.45 USDT" (with optional comma)
+            # More tolerant regex for "Amount 0.45 USDT" or "Amount: 0.45 USDT"
             amount_match = re.search(
-                r"Amount\s*[:=]\s*([0-9]+(?:[.,][0-9]+)?)\s*USDT",
+                r"Amount\s*[:=]?\s*([0-9]+(?:[.,][0-9]+)?)\s*USDT",
                 text,
                 re.IGNORECASE,
             )
