@@ -2071,12 +2071,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             return
 
         expected_amount = float(plan.get("price_usd", 0))
-        pending = pending_payments.get(user_id)
-        if pending and pending.get("plan_key") == plan_key:
-            since_iso = pending.get("created_at", "")
-        else:
-            # Fallback: look back 30 minutes
-            since_iso = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
+
+        # For reliability, always look back a fixed time window (e.g. last 60 minutes)
+        # instead of relying strictly on the invoice creation time, because users may pay
+        # before or shortly after opening the invoice in the bot.
+        since_iso = (datetime.now(timezone.utc) - timedelta(minutes=60)).isoformat()
 
         admin_username_clean = ADMIN_USERNAME.lstrip("@")
 
